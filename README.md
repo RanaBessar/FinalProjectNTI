@@ -14,15 +14,9 @@ us-east-1
 
 ## Run Locally
 
-### Init
 terraform init
-
-### Plan
 terraform plan -var-file=nonprod.tfvars
-
-### Apply
 terraform apply -var-file=nonprod.tfvars -auto-approve
 
-### Destroy
+## Destroy
 terraform destroy -var-file=nonprod.tfvars -auto-approve
-# FinalProjectNTI
