@@ -23,17 +23,37 @@ stages:
 
           - script: |
               sudo apt-get update
-              sudo apt-get install -y wget unzip
+              sudo apt-get install -y wget unzip curl
+              
+              # Install Terraform
               wget https://releases.hashicorp.com/terraform/1.6.6/terraform_1.6.6_linux_amd64.zip
               unzip terraform_1.6.6_linux_amd64.zip
               sudo mv terraform /usr/local/bin/
               terraform -version
-            displayName: "Install Terraform"
+              
+              # Install AWS CLI v2
+              curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+              unzip awscliv2.zip
+              sudo ./aws/install
+              aws --version
+            displayName: "Install Terraform and AWS CLI"
 
           - script: |
+              # Check if S3 bucket exists, create if not
+              aws s3 ls s3://nti-finalproject-terraform-state || aws s3 mb s3://nti-finalproject-terraform-state --region us-east-1
+              
+              # Check if DynamoDB table exists, create if not
+              aws dynamodb describe-table --table-name nti-finalproject-terraform-lock --region us-east-1 || \
+              aws dynamodb create-table \
+                --table-name nti-finalproject-terraform-lock \
+                --attribute-definitions AttributeName=LockID,AttributeType=S \
+                --key-schema AttributeName=LockID,KeyType=HASH \
+                --provisioned-throughput ReadCapacityUnits=5,WriteCapacityUnits=5 \
+                --region us-east-1
+              
               cd $(TF_WORKING_DIR)
               terraform init
-            displayName: "Terraform Init"
+            displayName: "Setup Backend and Terraform Init"
             env:
               AWS_ACCESS_KEY_ID: $(AWS_ACCESS_KEY_ID)
               AWS_SECRET_ACCESS_KEY: $(AWS_SECRET_ACCESS_KEY)
@@ -94,7 +114,7 @@ stages:
           - script: |
               cd $(TF_WORKING_DIR)
               terraform init
-            displayName: "Terraform Init"
+            displayName: "Terraform Init (Destroy)"
             env:
               AWS_ACCESS_KEY_ID: $(AWS_ACCESS_KEY_ID)
               AWS_SECRET_ACCESS_KEY: $(AWS_SECRET_ACCESS_KEY)
