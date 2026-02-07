@@ -11,6 +11,7 @@ variables:
   TF_WORKING_DIR: "terraform"
   AWS_DEFAULT_REGION: "us-east-1"
   RUN_DESTROY: "false"
+  group: aws-secrets
 
 stages:
   - stage: Terraform_Apply
