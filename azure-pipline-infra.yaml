@@ -22,21 +22,8 @@ stages:
           - checkout: self
 
           - script: |
-              sudo apt-get update
-              sudo apt-get install -y wget unzip curl
-              
-              # Install Terraform
-              wget https://releases.hashicorp.com/terraform/1.6.6/terraform_1.6.6_linux_amd64.zip
-              unzip terraform_1.6.6_linux_amd64.zip
-              sudo mv terraform /usr/local/bin/
-              terraform -version
-              
-              # Install AWS CLI v2
-              curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
-              unzip awscliv2.zip
-              sudo ./aws/install
-              aws --version
-            displayName: "Install Terraform and AWS CLI"
+              terraform --version
+            displayName: "Verify Terraform Installation"
 
           - script: |
               # Check if S3 bucket exists, create if not
@@ -103,13 +90,8 @@ stages:
           - checkout: self
 
           - script: |
-              sudo apt-get update
-              sudo apt-get install -y wget unzip
-              wget https://releases.hashicorp.com/terraform/1.6.6/terraform_1.6.6_linux_amd64.zip
-              unzip terraform_1.6.6_linux_amd64.zip
-              sudo mv terraform /usr/local/bin/
-              terraform -version
-            displayName: "Install Terraform"
+              terraform --version
+            displayName: "Verify Terraform Installation"
 
           - script: |
               cd $(TF_WORKING_DIR)
