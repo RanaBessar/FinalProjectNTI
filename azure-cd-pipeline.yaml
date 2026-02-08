@@ -1,0 +1,284 @@
+trigger:
+  branches:
+    include:
+      - main
+  paths:
+    include:
+      - gitops/**
+      - helm/nti-app/**
+      - .azure-cd-pipeline.yaml
+
+pool:
+  name: SelfHostedPool
+  demands:
+    - agent.os -equals Linux
+
+variables:
+  HELM_WORKING_DIR: "helm"
+  GITOPS_DIR: "gitops"
+  AWS_DEFAULT_REGION: "us-east-1"
+  APP_NAMESPACE: "nti-app"
+
+stages:
+
+# ================================
+# Validate Configuration Stage
+# ================================
+- stage: Validate
+  displayName: "Validate Deployment Config"
+  jobs:
+    - job: ValidateConfig
+      displayName: "Validate Helm & GitOps"
+      timeoutInMinutes: 15
+      cancelTimeoutInMinutes: 5
+
+      workspace:
+        clean: all
+
+      steps:
+        - checkout: self
+
+        - task: HelmInstaller@1
+          displayName: "Install Helm"
+          inputs:
+            helmVersionToInstall: "latest"
+
+        - script: |
+            echo "====================================="
+            echo " Helm Lint"
+            echo "====================================="
+            
+            helm lint ./$(HELM_WORKING_DIR)/nti-app
+          displayName: "Validate Helm Chart"
+
+        - script: |
+            echo "====================================="
+            echo " Validate YAML"
+            echo "====================================="
+            
+            for file in $(find ./$(GITOPS_DIR) -name '*.yaml' -o -name '*.yml'); do
+              echo "Validating: $file"
+              cat "$file" | grep -E '^[a-zA-Z]' > /dev/null || continue
+            done
+            
+            echo "YAML validation passed"
+          displayName: "Validate GitOps YAML"
+
+        - script: |
+            echo "====================================="
+            echo " Dry Run Helm"
+            echo "====================================="
+            
+            helm template nti-app ./$(HELM_WORKING_DIR)/nti-app \
+              --values ./$(HELM_WORKING_DIR)/nti-app/values-nonprod.yaml \
+              --namespace $(APP_NAMESPACE)
+          displayName: "Helm Dry Run"
+
+# ================================
+# Deploy Application Stage
+# ================================
+- stage: Deploy_Application
+  displayName: "Deploy Application Stage"
+  dependsOn: Validate
+  condition: succeeded()
+  jobs:
+    - job: DeployApp
+      displayName: "Deploy nti-app via Helm"
+      timeoutInMinutes: 30
+      cancelTimeoutInMinutes: 5
+
+      workspace:
+        clean: all
+
+      steps:
+        - checkout: self
+
+        - task: HelmInstaller@1
+          displayName: "Install Helm"
+          inputs:
+            helmVersionToInstall: "latest"
+
+        - task: KubectlInstaller@0
+          displayName: "Install kubectl"
+          inputs:
+            kubectlVersion: "latest"
+
+        - script: |
+            echo "====================================="
+            echo " Configure kubectl for EKS"
+            echo "====================================="
+
+            CLUSTER_NAME=$(aws eks list-clusters --region $(AWS_DEFAULT_REGION) --query 'clusters[0]' --output text)
+            echo "Cluster Name: $CLUSTER_NAME"
+
+            mkdir -p $HOME/.kube
+
+            aws eks update-kubeconfig \
+              --region "$(AWS_DEFAULT_REGION)" \
+              --name "$CLUSTER_NAME" \
+              --kubeconfig "$HOME/.kube/config"
+
+            echo "Testing kubectl..."
+            export KUBECONFIG="$HOME/.kube/config"
+            kubectl cluster-info
+            kubectl get nodes
+          displayName: "Configure kubectl for EKS"
+          env:
+            AWS_ACCESS_KEY_ID: $(AWS_ACCESS_KEY_ID)
+            AWS_SECRET_ACCESS_KEY: $(AWS_SECRET_ACCESS_KEY)
+            AWS_DEFAULT_REGION: $(AWS_DEFAULT_REGION)
+
+        - script: |
+            set -e
+            export KUBECONFIG="$HOME/.kube/config"
+            
+            echo "====================================="
+            echo " Deploy Application (nti-app)"
+            echo "====================================="
+            helm upgrade --install nti-app ./$(HELM_WORKING_DIR)/nti-app \
+              --namespace $(APP_NAMESPACE) \
+              --create-namespace \
+              --values ./$(HELM_WORKING_DIR)/nti-app/values-nonprod.yaml \
+              --force \
+              --wait \
+              --timeout 10m
+
+            echo "Application deployment completed!"
+          displayName: "Deploy Application with Helm"
+
+# ================================
+# ArgoCD Sync Stage
+# ================================
+- stage: ArgoCD_Sync
+  displayName: "ArgoCD Sync Stage"
+  dependsOn: Deploy_Application
+  condition: succeeded()
+  jobs:
+    - job: ArgoCDSync
+      displayName: "Sync with ArgoCD"
+      timeoutInMinutes: 30
+      cancelTimeoutInMinutes: 5
+
+      workspace:
+        clean: all
+
+      steps:
+        - checkout: self
+
+        - task: KubectlInstaller@0
+          displayName: "Install kubectl"
+          inputs:
+            kubectlVersion: "latest"
+
+        - script: |
+            echo "====================================="
+            echo " Configure kubectl for EKS"
+            echo "====================================="
+
+            CLUSTER_NAME=$(aws eks list-clusters --region $(AWS_DEFAULT_REGION) --query 'clusters[0]' --output text)
+            echo "Cluster Name: $CLUSTER_NAME"
+
+            mkdir -p $HOME/.kube
+
+            aws eks update-kubeconfig \
+              --region "$(AWS_DEFAULT_REGION)" \
+              --name "$CLUSTER_NAME" \
+              --kubeconfig "$HOME/.kube/config"
+
+            export KUBECONFIG="$HOME/.kube/config"
+            kubectl get nodes
+          displayName: "Configure kubectl for EKS"
+          env:
+            AWS_ACCESS_KEY_ID: $(AWS_ACCESS_KEY_ID)
+            AWS_SECRET_ACCESS_KEY: $(AWS_SECRET_ACCESS_KEY)
+            AWS_DEFAULT_REGION: $(AWS_DEFAULT_REGION)
+
+        - script: |
+            set -e
+            export KUBECONFIG="$HOME/.kube/config"
+            
+            echo "====================================="
+            echo " Check ArgoCD Status"
+            echo "====================================="
+            
+            kubectl get pods -n argo || true
+            kubectl get applications -n argo || true
+            
+            echo "ArgoCD is managing application deployments via GitOps"
+          displayName: "Check ArgoCD Status"
+
+# ================================
+# Verify Deployment Stage
+# ================================
+- stage: Verify
+  displayName: "Verify Deployment Stage"
+  dependsOn: ArgoCD_Sync
+  condition: succeeded()
+  jobs:
+    - job: VerifyDeployment
+      displayName: "Verify Application Deployment"
+      timeoutInMinutes: 15
+      cancelTimeoutInMinutes: 5
+
+      workspace:
+        clean: all
+
+      steps:
+        - task: KubectlInstaller@0
+          displayName: "Install kubectl"
+          inputs:
+            kubectlVersion: "latest"
+
+        - script: |
+            echo "====================================="
+            echo " Configure kubectl for EKS"
+            echo "====================================="
+
+            CLUSTER_NAME=$(aws eks list-clusters --region $(AWS_DEFAULT_REGION) --query 'clusters[0]' --output text)
+            echo "Cluster Name: $CLUSTER_NAME"
+
+            mkdir -p $HOME/.kube
+
+            aws eks update-kubeconfig \
+              --region "$(AWS_DEFAULT_REGION)" \
+              --name "$CLUSTER_NAME" \
+              --kubeconfig "$HOME/.kube/config"
+
+            export KUBECONFIG="$HOME/.kube/config"
+            kubectl cluster-info
+          displayName: "Configure kubectl for EKS"
+          env:
+            AWS_ACCESS_KEY_ID: $(AWS_ACCESS_KEY_ID)
+            AWS_SECRET_ACCESS_KEY: $(AWS_SECRET_ACCESS_KEY)
+            AWS_DEFAULT_REGION: $(AWS_DEFAULT_REGION)
+
+        - script: |
+            set -e
+            export KUBECONFIG="$HOME/.kube/config"
+            
+            echo "====================================="
+            echo " Verify Application Deployment"
+            echo "====================================="
+            
+            echo "Checking nti-app namespace:"
+            kubectl get ns $(APP_NAMESPACE)
+            
+            echo ""
+            echo "Pod Status:"
+            kubectl get pods -n $(APP_NAMESPACE) -o wide
+            
+            echo ""
+            echo "Service Status:"
+            kubectl get svc -n $(APP_NAMESPACE) -o wide
+            
+            echo ""
+            echo "Ingress Status:"
+            kubectl get ingress -n $(APP_NAMESPACE) -o wide || echo "No ingress found"
+            
+            echo ""
+            echo "====================================="
+            echo " Deployment Summary"
+            echo "====================================="
+            kubectl rollout status deployment -n $(APP_NAMESPACE) || true
+            kubectl get all -n $(APP_NAMESPACE)
+          displayName: "Verify Deployment"

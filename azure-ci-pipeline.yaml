@@ -1,0 +1,249 @@
+trigger:
+  branches:
+    include:
+      - main
+  paths:
+    include:
+      - app/**
+      - Dockerfile
+      - .dockerignore
+      - .azure-ci-pipeline.yaml
+
+pr:
+  branches:
+    include:
+      - main
+  paths:
+    include:
+      - app/**
+      - Dockerfile
+      - .dockerignore
+
+pool:
+  name: SelfHostedPool
+  demands:
+    - agent.os -equals Linux
+
+variables:
+  AWS_DEFAULT_REGION: "us-east-1"
+  IMAGE_NAME: "nti-app"
+  IMAGE_TAG: "$(Build.BuildId)"
+  DOCKER_BUILDKIT: 1
+
+stages:
+
+# ================================
+# Build Stage
+# ================================
+- stage: Build
+  displayName: "Build Docker Image"
+  jobs:
+    - job: BuildImage
+      displayName: "Build and Push Image"
+      timeoutInMinutes: 30
+      cancelTimeoutInMinutes: 5
+
+      workspace:
+        clean: all
+
+      steps:
+        - checkout: self
+
+        - script: |
+            echo "====================================="
+            echo " Verify Docker"
+            echo "====================================="
+            docker --version
+          displayName: "Verify Docker"
+
+        - script: |
+            set -e
+            echo "====================================="
+            echo " Get ECR Repository URL"
+            echo "====================================="
+            
+            AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+            ECR_REGISTRY="$AWS_ACCOUNT_ID.dkr.ecr.$(AWS_DEFAULT_REGION).amazonaws.com"
+            ECR_REPOSITORY="$ECR_REGISTRY/$(IMAGE_NAME)"
+            
+            echo "##vso[task.setvariable variable=AWS_ACCOUNT_ID]$AWS_ACCOUNT_ID"
+            echo "##vso[task.setvariable variable=ECR_REGISTRY]$ECR_REGISTRY"
+            echo "##vso[task.setvariable variable=ECR_REPOSITORY]$ECR_REPOSITORY"
+            
+            echo "AWS Account ID: $AWS_ACCOUNT_ID"
+            echo "ECR Registry: $ECR_REGISTRY"
+            echo "ECR Repository: $ECR_REPOSITORY"
+          displayName: "Get ECR Details"
+          env:
+            AWS_ACCESS_KEY_ID: $(AWS_ACCESS_KEY_ID)
+            AWS_SECRET_ACCESS_KEY: $(AWS_SECRET_ACCESS_KEY)
+            AWS_DEFAULT_REGION: $(AWS_DEFAULT_REGION)
+
+        - script: |
+            set -e
+            echo "====================================="
+            echo " Login to ECR"
+            echo "====================================="
+            
+            aws ecr get-login-password --region $(AWS_DEFAULT_REGION) | \
+              docker login --username AWS --password-stdin $(ECR_REGISTRY)
+          displayName: "Login to ECR"
+          env:
+            AWS_ACCESS_KEY_ID: $(AWS_ACCESS_KEY_ID)
+            AWS_SECRET_ACCESS_KEY: $(AWS_SECRET_ACCESS_KEY)
+            AWS_DEFAULT_REGION: $(AWS_DEFAULT_REGION)
+
+        - script: |
+            set -e
+            echo "====================================="
+            echo " Build Docker Image"
+            echo "====================================="
+            
+            docker build \
+              --build-arg BUILD_DATE=$(date -u +'%Y-%m-%dT%H:%M:%SZ') \
+              --build-arg VCS_REF=$(git rev-parse --short HEAD) \
+              --build-arg VERSION=$(IMAGE_TAG) \
+              -t $(ECR_REPOSITORY):$(IMAGE_TAG) \
+              -t $(ECR_REPOSITORY):latest \
+              -f Dockerfile \
+              .
+          displayName: "Build Docker Image"
+
+        - script: |
+            set -e
+            echo "====================================="
+            echo " Image Information"
+            echo "====================================="
+            docker images | grep $(IMAGE_NAME)
+            docker inspect $(ECR_REPOSITORY):$(IMAGE_TAG)
+          displayName: "Show Image Information"
+
+# ================================
+# Security Scan Stage
+# ================================
+- stage: Security_Scan
+  displayName: "Security Scan Stage"
+  dependsOn: Build
+  condition: succeeded()
+  jobs:
+    - job: TrivyScan
+      displayName: "Trivy Container Scan"
+      timeoutInMinutes: 30
+      cancelTimeoutInMinutes: 5
+
+      workspace:
+        clean: all
+
+      steps:
+        - checkout: self
+
+        - script: |
+            echo "====================================="
+            echo " Install Trivy"
+            echo "====================================="
+            
+            curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin
+            trivy --version
+          displayName: "Install Trivy"
+
+        - script: |
+            set -e
+            echo "====================================="
+            echo " Scan Docker Image with Trivy"
+            echo "====================================="
+            
+            mkdir -p $(Build.ArtifactStagingDirectory)/trivy-reports
+            
+            # Scan for vulnerabilities
+            trivy image \
+              --format json \
+              --output $(Build.ArtifactStagingDirectory)/trivy-reports/scan-results.json \
+              $(ECR_REGISTRY)/$(IMAGE_NAME):$(IMAGE_TAG) || true
+            
+            # Generate human-readable report
+            trivy image \
+              --format table \
+              --severity CRITICAL,HIGH \
+              $(ECR_REGISTRY)/$(IMAGE_NAME):$(IMAGE_TAG) || true
+          displayName: "Scan with Trivy"
+          env:
+            AWS_ACCESS_KEY_ID: $(AWS_ACCESS_KEY_ID)
+            AWS_SECRET_ACCESS_KEY: $(AWS_SECRET_ACCESS_KEY)
+            AWS_DEFAULT_REGION: $(AWS_DEFAULT_REGION)
+
+        - task: PublishBuildArtifacts@1
+          displayName: "Publish Trivy Reports"
+          inputs:
+            pathToPublish: $(Build.ArtifactStagingDirectory)/trivy-reports
+            artifactName: trivy-scan-results
+          condition: always()
+
+# ================================
+# Push Stage
+# ================================
+- stage: Push
+  displayName: "Push Image Stage"
+  dependsOn: Security_Scan
+  condition: succeeded()
+  jobs:
+    - job: PushImage
+      displayName: "Push to ECR"
+      timeoutInMinutes: 15
+      cancelTimeoutInMinutes: 5
+
+      workspace:
+        clean: all
+
+      steps:
+        - checkout: self
+
+        - script: |
+            set -e
+            echo "====================================="
+            echo " Login to ECR"
+            echo "====================================="
+            
+            AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+            ECR_REGISTRY="$AWS_ACCOUNT_ID.dkr.ecr.$(AWS_DEFAULT_REGION).amazonaws.com"
+            ECR_REPOSITORY="$ECR_REGISTRY/$(IMAGE_NAME)"
+            
+            echo "##vso[task.setvariable variable=ECR_REPOSITORY]$ECR_REPOSITORY"
+            
+            aws ecr get-login-password --region $(AWS_DEFAULT_REGION) | \
+              docker login --username AWS --password-stdin $ECR_REGISTRY
+          displayName: "Login to ECR"
+          env:
+            AWS_ACCESS_KEY_ID: $(AWS_ACCESS_KEY_ID)
+            AWS_SECRET_ACCESS_KEY: $(AWS_SECRET_ACCESS_KEY)
+            AWS_DEFAULT_REGION: $(AWS_DEFAULT_REGION)
+
+        - script: |
+            set -e
+            echo "====================================="
+            echo " Push Docker Image to ECR"
+            echo "====================================="
+            
+            docker push $(ECR_REPOSITORY):$(IMAGE_TAG)
+            docker push $(ECR_REPOSITORY):latest
+            
+            echo "Image pushed successfully:"
+            echo "  Tag: $(IMAGE_TAG)"
+            echo "  Latest: yes"
+          displayName: "Push Docker Image"
+
+        - script: |
+            set -e
+            echo "====================================="
+            echo " Verify Image in ECR"
+            echo "====================================="
+            
+            aws ecr describe-images \
+              --repository-name $(IMAGE_NAME) \
+              --region $(AWS_DEFAULT_REGION) \
+              --query 'imageDetails[*].[imageTags,imagePushedAt]' \
+              --output table
+          displayName: "Verify ECR Image"
+          env:
+            AWS_ACCESS_KEY_ID: $(AWS_ACCESS_KEY_ID)
+            AWS_SECRET_ACCESS_KEY: $(AWS_SECRET_ACCESS_KEY)
+            AWS_DEFAULT_REGION: $(AWS_DEFAULT_REGION)
