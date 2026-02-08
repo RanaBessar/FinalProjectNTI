@@ -1,0 +1,50 @@
+# Vault Helm Chart Values
+vault:
+  enabled: true
+  
+  # Server configuration
+  server:
+    replicaCount: 1
+    
+    # Image configuration
+    image:
+      repository: vault
+      tag: "1.15.0"
+      pullPolicy: IfNotPresent
+    
+    # Resource limits
+    resources:
+      requests:
+        memory: "256Mi"
+        cpu: "100m"
+      limits:
+        memory: "512Mi"
+        cpu: "500m"
+    
+    # Storage backend
+    dataStorage:
+      size: 10Gi
+      enabled: true
+    
+    # HA Storage
+    ha:
+      enabled: false
+      replicas: 1
+    
+    # Service configuration
+    service:
+      type: ClusterIP
+      port: 8200
+    
+    # UI configuration
+    ui:
+      enabled: true
+  
+  # Injector configuration
+  injector:
+    enabled: true
+    
+  # Audit logs
+  auditStorage:
+    enabled: true
+    size: 5Gi

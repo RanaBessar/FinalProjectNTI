@@ -1,0 +1,11 @@
+apiVersion: v2
+name: sonarqube
+description: A Helm chart for SonarQube code quality analysis
+type: application
+version: 0.1.0
+appVersion: "10.0.0"
+
+dependencies:
+  - name: sonarqube
+    version: "10.0.0+679"
+    repository: "https://SonarSource.github.io/helm-chart-sonarqube"

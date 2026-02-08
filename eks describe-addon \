@@ -1,0 +1,18 @@
+{
+    "addon": {
+        "addonName": "aws-ebs-csi-driver",
+        "clusterName": "nti-final-nonprod-eks",
+        "status": "CREATING",
+        "addonVersion": "v1.55.0-eksbuild.2",
+        "health": {
+            "issues": []
+        },
+        "addonArn": "arn:aws:eks:us-east-1:842303506852:addon/nti-final-nonprod-eks/aws-ebs-csi-driver/3ace1f1b-8086-b141-737a-08aefc3a23dc",
+        "createdAt": "2026-02-08T19:05:18.292000+02:00",
+        "modifiedAt": "2026-02-08T19:05:18.310000+02:00",
+        "tags": {},
+        "namespaceConfig": {
+            "namespace": "kube-system"
+        }
+    }
+}

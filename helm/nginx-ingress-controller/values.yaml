@@ -1,0 +1,49 @@
+# Nginx Ingress Controller Helm Chart Values
+ingress-nginx:
+  enabled: true
+  
+  # Controller configuration
+  controller:
+    replicaCount: 2
+    
+    # Image configuration
+    image:
+      repository: registry.k8s.io/ingress-nginx/controller
+      tag: "v1.9.0"
+      pullPolicy: IfNotPresent
+    
+    # Service configuration
+    service:
+      type: LoadBalancer
+      port: 80
+      targetPort: 80
+      annotations: {}
+      # For AWS:
+      # service.beta.kubernetes.io/aws-load-balancer-type: "nlb"
+    
+    # Resource limits
+    resources:
+      requests:
+        cpu: 100m
+        memory: 90Mi
+      limits:
+        cpu: 500m
+        memory: 512Mi
+    
+    # Ingress class configuration
+    ingressClass: nginx
+    ingressClassResource:
+      name: nginx
+      enabled: true
+      default: true
+  
+  # Admission webhooks
+  admissionWebhooks:
+    enabled: true
+    patch:
+      enabled: true
+  
+  # Security context
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 33

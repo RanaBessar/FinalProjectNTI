@@ -240,14 +240,117 @@ stages:
         - script: |
             set -e
             echo "====================================="
-            echo " Helm Upgrade/Install"
+            echo " Add Helm Repositories"
             echo "====================================="
 
+            helm repo add stable https://charts.helm.sh/stable
+            helm repo add hashicorp https://helm.releases.hashicorp.com
+            helm repo add sonarqube https://SonarSource.github.io/helm-chart-sonarqube
+            helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx
+            helm repo add sonatype https://sonatype.github.io/helm3-charts
+            helm repo add argo https://argoproj.github.io/argo-helm
+            helm repo update
+          displayName: "Add Helm Repositories"
+
+        - script: |
+            set -e
             export KUBECONFIG="$HOME/.kube/config"
             echo "KUBECONFIG=$KUBECONFIG"
 
             kubectl get nodes
 
+            echo "====================================="
+            echo " Install Nginx Ingress Controller"
+            echo "====================================="
+            helm upgrade --install ingress-nginx ingress-nginx/ingress-nginx \
+              --namespace ingress-nginx \
+              --create-namespace \
+              --values ./$(HELM_WORKING_DIR)/nginx-ingress-controller/values.yaml \
+              --wait \
+              --timeout 10m
+          displayName: "Deploy Nginx Ingress Controller"
+
+        - script: |
+            set -e
+            export KUBECONFIG="$HOME/.kube/config"
+
+            echo "====================================="
+            echo " Install ArgoCD"
+            echo "====================================="
+            helm upgrade --install argocd argo/argo-cd \
+              --namespace argo \
+              --create-namespace \
+              --set server.service.type=ClusterIP \
+              --set server.ingress.enabled=true \
+              --set server.ingress.ingressClassName=nginx \
+              --set server.ingress.hosts[0]=argocd.local \
+              --set server.ingress.paths[0].path=/ \
+              --set server.ingress.paths[0].pathType=Prefix \
+              --wait \
+              --timeout 10m
+
+            kubectl apply -f ./$(HELM_WORKING_DIR)/argocd-ingress.yaml
+          displayName: "Deploy ArgoCD"
+
+        - script: |
+            set -e
+            export KUBECONFIG="$HOME/.kube/config"
+
+            echo "====================================="
+            echo " Install Vault"
+            echo "====================================="
+            helm upgrade --install vault hashicorp/vault \
+              --namespace vault \
+              --create-namespace \
+              --values ./$(HELM_WORKING_DIR)/vault/values.yaml \
+              --wait \
+              --timeout 10m
+
+            kubectl apply -f ./$(HELM_WORKING_DIR)/vault-ingress.yaml
+          displayName: "Deploy Vault"
+
+        - script: |
+            set -e
+            export KUBECONFIG="$HOME/.kube/config"
+
+            echo "====================================="
+            echo " Install SonarQube"
+            echo "====================================="
+            helm upgrade --install sonarqube sonarqube/sonarqube \
+              --namespace sonarqube \
+              --create-namespace \
+              --values ./$(HELM_WORKING_DIR)/sonarqube/values.yaml \
+              --wait \
+              --timeout 15m
+
+            kubectl apply -f ./$(HELM_WORKING_DIR)/sonarqube-ingress.yaml
+          displayName: "Deploy SonarQube"
+
+        - script: |
+            set -e
+            export KUBECONFIG="$HOME/.kube/config"
+
+            echo "====================================="
+            echo " Install Nexus Repository Manager"
+            echo "====================================="
+            helm upgrade --install nexus sonatype/nexus-repository-manager \
+              --namespace nexus \
+              --create-namespace \
+              --set nexusBackup.persistence.storageSize=10Gi \
+              --set persistence.storageSize=20Gi \
+              --wait \
+              --timeout 15m
+
+            kubectl apply -f ./nexus-ingress.yaml
+          displayName: "Deploy Nexus"
+
+        - script: |
+            set -e
+            export KUBECONFIG="$HOME/.kube/config"
+
+            echo "====================================="
+            echo " Install Application (nti-app)"
+            echo "====================================="
             helm upgrade --install nti-app ./$(HELM_WORKING_DIR)/nti-app \
               --namespace nti-app \
               --create-namespace \
@@ -256,21 +359,54 @@ stages:
               --timeout 10m
 
             echo "Helm Deployment Completed!"
-          displayName: "Helm Upgrade/Install"
+          displayName: "Deploy Application (nti-app)"
 
         - script: |
             set -e
             echo "====================================="
-            echo " Verify Deployment"
+            echo " Verify All Deployments"
             echo "====================================="
 
             export KUBECONFIG="$HOME/.kube/config"
 
+            echo "All Namespaces:"
             kubectl get ns
-            kubectl get pods -n nti-app
-            kubectl get svc -n nti-app
+
+            echo ""
+            echo "===== Nginx Ingress Controller ====="
+            kubectl get pods -n ingress-nginx || true
+            kubectl get svc -n ingress-nginx || true
+
+            echo ""
+            echo "===== ArgoCD ====="
+            kubectl get pods -n argo || true
+            kubectl get svc -n argo || true
+            kubectl get ingress -n argo || true
+
+            echo ""
+            echo "===== Vault ====="
+            kubectl get pods -n vault || true
+            kubectl get svc -n vault || true
+            kubectl get ingress -n vault || true
+
+            echo ""
+            echo "===== SonarQube ====="
+            kubectl get pods -n sonarqube || true
+            kubectl get svc -n sonarqube || true
+            kubectl get ingress -n sonarqube || true
+
+            echo ""
+            echo "===== Nexus ====="
+            kubectl get pods -n nexus || true
+            kubectl get svc -n nexus || true
+            kubectl get ingress -n nexus || true
+
+            echo ""
+            echo "===== NTI App ====="
+            kubectl get pods -n nti-app || true
+            kubectl get svc -n nti-app || true
             kubectl get ingress -n nti-app || true
-          displayName: "Verify Deployment"
+          displayName: "Verify All Deployments"
 
 
 # ================================
@@ -338,16 +474,21 @@ stages:
 
             export KUBECONFIG="$HOME/.kube/config"
 
+            echo "Uninstalling Helm Releases..."
             helm uninstall nti-app -n nti-app || true
             helm uninstall ingress-nginx -n ingress-nginx || true
             helm uninstall argocd -n argo || true
+            helm uninstall vault -n vault || true
+            helm uninstall sonarqube -n sonarqube || true
+            helm uninstall nexus -n nexus || true
 
+            echo "Deleting Namespaces..."
             kubectl delete namespace nti-app --ignore-not-found=true
             kubectl delete namespace ingress-nginx --ignore-not-found=true
             kubectl delete namespace argo --ignore-not-found=true
-            kubectl delete namespace nexus --ignore-not-found=true
             kubectl delete namespace vault --ignore-not-found=true
             kubectl delete namespace sonarqube --ignore-not-found=true
+            kubectl delete namespace nexus --ignore-not-found=true
 
             echo "Cleanup done."
           displayName: "Cleanup Helm + Namespaces"
