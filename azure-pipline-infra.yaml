@@ -274,6 +274,7 @@ stages:
               --namespace ingress-nginx \
               --create-namespace \
               --values ./$(HELM_WORKING_DIR)/nginx-ingress-controller/values.yaml \
+              --force \
               --wait \
               --timeout 10m
           displayName: "Deploy Nginx Ingress Controller"
@@ -294,6 +295,7 @@ stages:
               --set server.ingress.hosts[0]=argocd.local \
               --set server.ingress.paths[0].path=/ \
               --set server.ingress.paths[0].pathType=Prefix \
+              --force \
               --wait \
               --timeout 10m
 
@@ -307,10 +309,16 @@ stages:
             echo "====================================="
             echo " Install Vault"
             echo "====================================="
+            
+            # Clean up conflicting webhook if it exists
+            kubectl delete mutatingwebhookconfigurations vault-agent-injector-cfg --ignore-not-found=true || true
+            sleep 5
+            
             helm upgrade --install vault hashicorp/vault \
               --namespace vault \
               --create-namespace \
               --values ./$(HELM_WORKING_DIR)/vault/values.yaml \
+              --force \
               --wait \
               --timeout 10m
 
@@ -328,6 +336,7 @@ stages:
               --namespace sonarqube \
               --create-namespace \
               --values ./$(HELM_WORKING_DIR)/sonarqube/values.yaml \
+              --force \
               --wait \
               --timeout 15m
 
@@ -346,6 +355,7 @@ stages:
               --create-namespace \
               --set nexusBackup.persistence.storageSize=10Gi \
               --set persistence.storageSize=20Gi \
+              --force \
               --wait \
               --timeout 15m
 
@@ -363,6 +373,7 @@ stages:
               --namespace nti-app \
               --create-namespace \
               --values ./$(HELM_WORKING_DIR)/nti-app/values-nonprod.yaml \
+              --force \
               --wait \
               --timeout 10m
 

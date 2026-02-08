@@ -40,9 +40,9 @@ vault:
     ui:
       enabled: true
   
-  # Injector configuration
+  # Injector configuration (disabled to avoid webhook conflicts)
   injector:
-    enabled: true
+    enabled: false
     
   # Audit logs
   auditStorage:
