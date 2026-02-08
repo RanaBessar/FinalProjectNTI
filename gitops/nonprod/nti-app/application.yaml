@@ -1,0 +1,23 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: nti-app-nonprod
+  namespace: argo
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/RanaBessar/FinalProjectNTI.git
+    targetRevision: main
+    path: gitops/nonprod/nti-app
+    helm:
+      valueFiles:
+        - values-nonprod.yaml
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: nti-app
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
