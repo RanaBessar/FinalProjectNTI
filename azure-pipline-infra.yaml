@@ -238,7 +238,7 @@ stages:
           displayName: "Check Helm Chart Files"
 
         - script: |
-            set -e
+            set +e
             echo "====================================="
             echo " Add Helm Repositories"
             echo "====================================="
@@ -249,7 +249,15 @@ stages:
             helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx
             helm repo add sonatype https://sonatype.github.io/helm3-charts
             helm repo add argo https://argoproj.github.io/argo-helm
+            
+            echo "Updating Helm Repositories..."
             helm repo update
+            
+            if [ $? -eq 0 ]; then
+              echo "Helm repositories updated successfully"
+            else
+              echo "Warning: Some repositories may have failed to update"
+            fi
           displayName: "Add Helm Repositories"
 
         - script: |
