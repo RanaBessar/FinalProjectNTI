@@ -2,6 +2,9 @@
 sonarqube:
   edition: community
   
+  # Monitoring passcode (required by SonarQube)
+  monitoringPasscode: "sonarqube-monitoring-passcode-12345"
+  
   # Replication
   replicaCount: 1
   
