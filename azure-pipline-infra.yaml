@@ -218,10 +218,8 @@ stages:
               --name "$CLUSTER_NAME" \
               --kubeconfig "$HOME/.kube/config"
 
-            echo "Exporting KUBECONFIG..."
-            export KUBECONFIG="$HOME/.kube/config"
-
             echo "Testing kubectl..."
+            export KUBECONFIG="$HOME/.kube/config"
             kubectl cluster-info
             kubectl get nodes
           displayName: "Configure kubectl for EKS"
@@ -271,6 +269,7 @@ stages:
             kubectl get ns
             kubectl get pods -n nti-app
             kubectl get svc -n nti-app
+            kubectl get ingress -n nti-app || true
           displayName: "Verify Deployment"
 
 
@@ -283,9 +282,81 @@ stages:
   condition: and(succeeded(), eq(variables['RUN_DESTROY'], 'true'))
 
   jobs:
+    - job: CleanupK8s
+      displayName: "Cleanup Kubernetes & Helm"
+      timeoutInMinutes: 30
+      cancelTimeoutInMinutes: 5
+
+      workspace:
+        clean: all
+
+      steps:
+        - checkout: self
+
+        - task: HelmInstaller@1
+          displayName: "Install Helm"
+          inputs:
+            helmVersionToInstall: "latest"
+
+        - task: KubectlInstaller@0
+          displayName: "Install kubectl"
+          inputs:
+            kubectlVersion: "latest"
+
+        - script: |
+            set -e
+            echo "====================================="
+            echo " Configure kubeconfig for cleanup"
+            echo "====================================="
+
+            cd $(TF_WORKING_DIR)
+            terraform init -reconfigure
+
+            CLUSTER_NAME=$(terraform output -raw eks_cluster_name)
+            echo "Cluster Name: $CLUSTER_NAME"
+
+            mkdir -p $HOME/.kube
+
+            aws eks update-kubeconfig \
+              --region "$(AWS_DEFAULT_REGION)" \
+              --name "$CLUSTER_NAME" \
+              --kubeconfig "$HOME/.kube/config"
+
+            export KUBECONFIG="$HOME/.kube/config"
+            kubectl get nodes
+          displayName: "Configure kubeconfig"
+          env:
+            AWS_ACCESS_KEY_ID: $(AWS_ACCESS_KEY_ID)
+            AWS_SECRET_ACCESS_KEY: $(AWS_SECRET_ACCESS_KEY)
+            AWS_DEFAULT_REGION: $(AWS_DEFAULT_REGION)
+
+        - script: |
+            set +e
+            echo "====================================="
+            echo " Cleanup Helm Releases + Namespaces"
+            echo "====================================="
+
+            export KUBECONFIG="$HOME/.kube/config"
+
+            helm uninstall nti-app -n nti-app || true
+            helm uninstall ingress-nginx -n ingress-nginx || true
+            helm uninstall argocd -n argo || true
+
+            kubectl delete namespace nti-app --ignore-not-found=true
+            kubectl delete namespace ingress-nginx --ignore-not-found=true
+            kubectl delete namespace argo --ignore-not-found=true
+            kubectl delete namespace nexus --ignore-not-found=true
+            kubectl delete namespace vault --ignore-not-found=true
+            kubectl delete namespace sonarqube --ignore-not-found=true
+
+            echo "Cleanup done."
+          displayName: "Cleanup Helm + Namespaces"
+
     - job: TerraformDestroy
       displayName: "Terraform Destroy"
-      timeoutInMinutes: 40
+      dependsOn: CleanupK8s
+      condition: always()
+      timeoutInMinutes: 60
       cancelTimeoutInMinutes: 5
 
       workspace:
@@ -296,6 +367,10 @@ stages:
 
         - script: |
             set -e
+            echo "====================================="
+            echo " Terraform Destroy"
+            echo "====================================="
+
             cd $(TF_WORKING_DIR)
             terraform init -reconfigure
             terraform destroy -var-file=nonprod.tfvars -auto-approve
