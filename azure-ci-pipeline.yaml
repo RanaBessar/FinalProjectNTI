@@ -38,8 +38,37 @@ stages:
 - stage: Build
   displayName: "Build Docker Image"
   jobs:
+    - job: ValidateCredentials
+      displayName: "Validate Credentials"
+      timeoutInMinutes: 5
+      cancelTimeoutInMinutes: 5
+
+      steps:
+        - script: |
+            set -e
+            echo "====================================="
+            echo " Validate AWS Credentials"
+            echo "====================================="
+            
+            if [ -z "$AWS_ACCESS_KEY_ID" ] || [ -z "$AWS_SECRET_ACCESS_KEY" ]; then
+              echo "ERROR: AWS credentials not set!"
+              echo "Please set these in Azure DevOps Pipeline Variables:"
+              echo "  - AWS_ACCESS_KEY_ID"
+              echo "  - AWS_SECRET_ACCESS_KEY"
+              exit 1
+            fi
+            
+            aws sts get-caller-identity
+          displayName: "Validate AWS Credentials"
+          env:
+            AWS_ACCESS_KEY_ID: $(AWS_ACCESS_KEY_ID)
+            AWS_SECRET_ACCESS_KEY: $(AWS_SECRET_ACCESS_KEY)
+            AWS_DEFAULT_REGION: $(AWS_DEFAULT_REGION)
+
     - job: BuildImage
       displayName: "Build and Push Image"
+      dependsOn: ValidateCredentials
+      condition: succeeded()
       timeoutInMinutes: 30
       cancelTimeoutInMinutes: 5
 
