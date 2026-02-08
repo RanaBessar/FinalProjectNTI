@@ -50,13 +50,77 @@ stages:
 
         - script: |
             echo "====================================="
+            echo " Debug: Check Variables"
+            echo "====================================="
+            
+            echo "AWS_DEFAULT_REGION: $(AWS_DEFAULT_REGION)"
+            echo "AWS_ACCESS_KEY_ID length: ${#AWS_ACCESS_KEY_ID}"
+            echo "AWS_SECRET_ACCESS_KEY length: ${#AWS_SECRET_ACCESS_KEY}"
+            
+            if [ -z "$AWS_ACCESS_KEY_ID" ]; then
+              echo "❌ ERROR: AWS_ACCESS_KEY_ID is NOT set!"
+              echo "   Please add to Pipeline Variables in Azure DevOps"
+              exit 1
+            fi
+            
+            if [ -z "$AWS_SECRET_ACCESS_KEY" ]; then
+              echo "❌ ERROR: AWS_SECRET_ACCESS_KEY is NOT set!"
+              echo "   Please add to Pipeline Variables in Azure DevOps"
+              exit 1
+            fi
+            
+            echo "✅ Both credentials appear to be set"
+          displayName: "Debug: Verify Variables"
+          env:
+            AWS_ACCESS_KEY_ID: $(AWS_ACCESS_KEY_ID)
+            AWS_SECRET_ACCESS_KEY: $(AWS_SECRET_ACCESS_KEY)
+
+        - script: |
+            echo "====================================="
+            echo " Validate AWS Credentials"
+            echo "====================================="
+            
+            set -e
+            
+            # Test AWS CLI with credentials
+            aws --version
+            
+            echo "Testing AWS credentials..."
+            if aws sts get-caller-identity 2>&1 | grep -q "UnrecognizedClientException\|InvalidClientTokenId\|InvalidSignatureException"; then
+              echo "❌ ERROR: AWS credentials are INVALID or EXPIRED"
+              echo ""
+              echo "Troubleshooting steps:"
+              echo "1. Verify the Access Key ID in Azure DevOps is correct"
+              echo "2. Verify the Secret Access Key in Azure DevOps is correct (no extra spaces!)"
+              echo "3. If credentials are old (>90 days), regenerate them in AWS IAM"
+              echo "4. Test locally: aws sts get-caller-identity"
+              exit 1
+            fi
+            
+            aws sts get-caller-identity
+            echo "✅ AWS credentials are valid"
+          displayName: "Validate AWS Credentials"
+          env:
+            AWS_ACCESS_KEY_ID: $(AWS_ACCESS_KEY_ID)
+            AWS_SECRET_ACCESS_KEY: $(AWS_SECRET_ACCESS_KEY)
+            AWS_DEFAULT_REGION: $(AWS_DEFAULT_REGION)
+
+        - script: |
+            echo "====================================="
             echo " Configure kubectl for EKS"
             echo "====================================="
 
-            aws sts get-caller-identity
-
             CLUSTER_NAME=$(aws eks list-clusters --region $(AWS_DEFAULT_REGION) --query 'clusters[0]' --output text)
             echo "Cluster Name: $CLUSTER_NAME"
+            
+            if [ -z "$CLUSTER_NAME" ] || [ "$CLUSTER_NAME" = "None" ]; then
+              echo "❌ ERROR: No EKS clusters found!"
+              echo ""
+              echo "Troubleshooting:"
+              echo "1. Run Infrastructure Pipeline first to create the EKS cluster"
+              echo "2. Verify cluster exists in AWS: aws eks list-clusters --region $(AWS_DEFAULT_REGION)"
+              exit 1
+            fi
 
             mkdir -p $HOME/.kube
 
