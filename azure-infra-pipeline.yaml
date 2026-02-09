@@ -193,7 +193,7 @@ stages:
             
             terraform init \
               -backend-config="bucket=$(TF_STATE_BUCKET)" \
-              -backend-config="key=$(ENVIRONMENT)/terraform.tfstate" \
+              -backend-config="key=eks/terraform.tfstate" \
               -backend-config="region=$(AWS_DEFAULT_REGION)" \
               -backend-config="dynamodb_table=$(TF_LOCK_TABLE)" \
               -backend-config="encrypt=true" \
@@ -267,7 +267,7 @@ stages:
             
             terraform init \
               -backend-config="bucket=$(TF_STATE_BUCKET)" \
-              -backend-config="key=$(ENVIRONMENT)/terraform.tfstate" \
+              -backend-config="key=eks/terraform.tfstate" \
               -backend-config="region=$(AWS_DEFAULT_REGION)" \
               -backend-config="dynamodb_table=$(TF_LOCK_TABLE)" \
               -backend-config="encrypt=true" \
@@ -410,7 +410,7 @@ stages:
             
             terraform init \
               -backend-config="bucket=$(TF_STATE_BUCKET)" \
-              -backend-config="key=$(ENVIRONMENT)/terraform.tfstate" \
+              -backend-config="key=eks/terraform.tfstate" \
               -backend-config="region=$(AWS_DEFAULT_REGION)" \
               -backend-config="dynamodb_table=$(TF_LOCK_TABLE)" \
               -backend-config="encrypt=true" \
@@ -542,7 +542,7 @@ stages:
             
             terraform init \
               -backend-config="bucket=$(TF_STATE_BUCKET)" \
-              -backend-config="key=$(ENVIRONMENT)/terraform.tfstate" \
+              -backend-config="key=eks/terraform.tfstate" \
               -backend-config="region=$(AWS_DEFAULT_REGION)" \
               -backend-config="dynamodb_table=$(TF_LOCK_TABLE)" \
               -backend-config="encrypt=true" \
