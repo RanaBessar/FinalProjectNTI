@@ -1,0 +1,42 @@
+# Git
+.git
+.gitignore
+
+# Node
+node_modules
+npm-debug.log
+yarn-error.log
+
+# Tests
+app/tests
+*.test.js
+coverage
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+
+# Documentation
+*.md
+!README.md
+
+# Terraform
+terraform/
+modules/
+*.tf
+*.tfvars
+
+# Helm
+helm/
+gitops/
+
+# Azure Pipelines (not needed in container)
+azure-*.yaml
+
+# Misc
+.DS_Store
+*.log
+.env
+.env.*
