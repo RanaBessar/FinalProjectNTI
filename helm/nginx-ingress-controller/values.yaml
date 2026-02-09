@@ -37,11 +37,9 @@ ingress-nginx:
       enabled: true
       default: true
   
-  # Admission webhooks
+  # Admission webhooks - disabled to prevent upgrade timeouts
   admissionWebhooks:
-    enabled: true
-    patch:
-      enabled: true
+    enabled: false
   
   # Security context
   securityContext:
