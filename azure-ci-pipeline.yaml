@@ -3,7 +3,7 @@
 # ============================================================================
 # This pipeline builds Docker images, runs security scans, and pushes to ECR
 # Author: DevOps Team
-# Version: 2.0.0
+# Version: 2.1.0
 # ============================================================================
 
 trigger:
@@ -41,17 +41,17 @@ pool:
 variables:
   # AWS Configuration
   AWS_DEFAULT_REGION: "us-east-1"
-  
+
   # Docker Configuration
   IMAGE_NAME: "nti-app"
   IMAGE_TAG: "$(Build.BuildId)"
   DOCKER_BUILDKIT: 1
-  
+
   # Feature Flags
   RUN_SECURITY_SCAN: "true"
   RUN_UNIT_TESTS: "true"
   PUSH_TO_REGISTRY: "true"
-  
+
   # Security Scan Configuration
   TRIVY_SEVERITY: "CRITICAL,HIGH"
   FAIL_ON_CRITICAL: "false"
@@ -70,7 +70,7 @@ stages:
     - job: ValidateAndBuild
       displayName: "Validate & Build Docker Image"
       timeoutInMinutes: 30
-      
+
       steps:
         - checkout: self
           clean: true
@@ -90,12 +90,12 @@ stages:
         - script: |
             set -e
             echo "Validating AWS credentials..."
-            
+
             if [ -z "$AWS_ACCESS_KEY_ID" ] || [ -z "$AWS_SECRET_ACCESS_KEY" ]; then
               echo "❌ AWS credentials not set!"
               exit 1
             fi
-            
+
             aws sts get-caller-identity
             echo "✅ AWS credentials validated"
           displayName: "Validate AWS Credentials"
@@ -109,15 +109,15 @@ stages:
             echo "====================================="
             echo "  Get ECR Repository Details"
             echo "====================================="
-            
+
             AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
             ECR_REGISTRY="$AWS_ACCOUNT_ID.dkr.ecr.$(AWS_DEFAULT_REGION).amazonaws.com"
             ECR_REPOSITORY="$ECR_REGISTRY/$(IMAGE_NAME)"
-            
+
             echo "##vso[task.setvariable variable=AWS_ACCOUNT_ID]$AWS_ACCOUNT_ID"
             echo "##vso[task.setvariable variable=ECR_REGISTRY]$ECR_REGISTRY"
             echo "##vso[task.setvariable variable=ECR_REPOSITORY]$ECR_REPOSITORY"
-            
+
             echo "AWS Account ID: $AWS_ACCOUNT_ID"
             echo "ECR Registry: $ECR_REGISTRY"
             echo "ECR Repository: $ECR_REPOSITORY"
@@ -133,10 +133,10 @@ stages:
             echo "====================================="
             echo "  Login to Amazon ECR"
             echo "====================================="
-            
+
             aws ecr get-login-password --region $(AWS_DEFAULT_REGION) | \
               docker login --username AWS --password-stdin $(ECR_REGISTRY)
-            
+
             echo "✅ ECR login successful"
           displayName: "Login to ECR"
           env:
@@ -149,8 +149,7 @@ stages:
             echo "====================================="
             echo "  Lint Dockerfile"
             echo "====================================="
-            
-            # Install hadolint if not present
+
             if ! command -v hadolint &> /dev/null; then
               echo "Installing hadolint..."
               wget -qO /tmp/hadolint https://github.com/hadolint/hadolint/releases/download/v2.12.0/hadolint-Linux-x86_64
@@ -159,7 +158,7 @@ stages:
             else
               HADOLINT=hadolint
             fi
-            
+
             if [ -f "Dockerfile" ]; then
               echo "Linting Dockerfile..."
               $HADOLINT Dockerfile || true
@@ -173,13 +172,25 @@ stages:
         - script: |
             set -e
             echo "====================================="
+            echo "  Cleanup Docker Space"
+            echo "====================================="
+
+            docker system prune -af || true
+            docker builder prune -af || true
+          displayName: "Cleanup Docker Space"
+          continueOnError: true
+
+        - script: |
+            set -e
+            echo "====================================="
             echo "  Build Docker Image"
             echo "====================================="
-            
+
             BUILD_DATE=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
             VCS_REF=$(git rev-parse --short HEAD)
-            
+
             docker build \
+              --network=host \
               --build-arg BUILD_DATE=$BUILD_DATE \
               --build-arg VCS_REF=$VCS_REF \
               --build-arg VERSION=$(IMAGE_TAG) \
@@ -192,11 +203,10 @@ stages:
               -t $(ECR_REPOSITORY):$(Build.SourceBranchName)-$(IMAGE_TAG) \
               -f Dockerfile \
               .
-            
+
             echo ""
             echo "✅ Docker image built successfully"
             echo ""
-            echo "Image details:"
             docker images | grep $(IMAGE_NAME)
           displayName: "Build Docker Image"
 
@@ -204,10 +214,12 @@ stages:
             echo "====================================="
             echo "  Image Metadata"
             echo "====================================="
-            
+
             echo "Image: $(ECR_REPOSITORY):$(IMAGE_TAG)"
             echo ""
+
             docker inspect $(ECR_REPOSITORY):$(IMAGE_TAG) --format='{{json .Config.Labels}}' | jq . || true
+
             echo ""
             echo "Image size:"
             docker images $(ECR_REPOSITORY):$(IMAGE_TAG) --format "{{.Size}}"
@@ -220,15 +232,12 @@ stages:
   displayName: "🔒 Security Scan"
   dependsOn: Build
   condition: and(succeeded(), eq(variables['RUN_SECURITY_SCAN'], 'true'))
-  
+
   jobs:
     - job: TrivyScan
       displayName: "Trivy Container Scan"
       timeoutInMinutes: 20
-      
-      variables:
-        ECR_REPOSITORY: $[ stageDependencies.Build.ValidateAndBuild.outputs['GetECRDetails.ECR_REPOSITORY'] ]
-      
+
       steps:
         - checkout: self
           clean: true
@@ -239,28 +248,27 @@ stages:
             echo "====================================="
             echo "  Install Trivy Scanner"
             echo "====================================="
-            
+
             if ! command -v trivy &> /dev/null; then
               mkdir -p $HOME/bin
               curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b $HOME/bin
               export PATH=$HOME/bin:$PATH
               echo "##vso[task.prependpath]$HOME/bin"
             fi
-            
+
             trivy --version
           displayName: "Install Trivy"
 
         - script: |
             set -e
-            
+
             AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
             ECR_REGISTRY="$AWS_ACCOUNT_ID.dkr.ecr.$(AWS_DEFAULT_REGION).amazonaws.com"
             ECR_REPOSITORY="$ECR_REGISTRY/$(IMAGE_NAME)"
-            
-            # Login to ECR for scanning
+
             aws ecr get-login-password --region $(AWS_DEFAULT_REGION) | \
               docker login --username AWS --password-stdin $ECR_REGISTRY
-            
+
             echo "##vso[task.setvariable variable=ECR_REPOSITORY]$ECR_REPOSITORY"
           displayName: "Setup ECR Access"
           env:
@@ -273,37 +281,34 @@ stages:
             echo "====================================="
             echo "  Vulnerability Scan"
             echo "====================================="
-            
+
             mkdir -p $(Build.ArtifactStagingDirectory)/security-reports
-            
-            # Run comprehensive scan
+
             trivy image \
               --format json \
               --output $(Build.ArtifactStagingDirectory)/security-reports/trivy-results.json \
               $(ECR_REPOSITORY):$(IMAGE_TAG)
-            
-            # Generate human-readable report
+
             trivy image \
               --format table \
               --severity $(TRIVY_SEVERITY) \
               $(ECR_REPOSITORY):$(IMAGE_TAG)
-            
-            # Check for critical vulnerabilities
+
             CRITICAL_COUNT=$(trivy image --format json $(ECR_REPOSITORY):$(IMAGE_TAG) | jq '[.Results[]?.Vulnerabilities[]? | select(.Severity=="CRITICAL")] | length')
             HIGH_COUNT=$(trivy image --format json $(ECR_REPOSITORY):$(IMAGE_TAG) | jq '[.Results[]?.Vulnerabilities[]? | select(.Severity=="HIGH")] | length')
-            
+
             echo ""
             echo "====================================="
             echo "  Vulnerability Summary"
             echo "====================================="
             echo "CRITICAL: $CRITICAL_COUNT"
             echo "HIGH: $HIGH_COUNT"
-            
+
             if [ "$(FAIL_ON_CRITICAL)" = "true" ] && [ "$CRITICAL_COUNT" -gt 0 ]; then
               echo "❌ Critical vulnerabilities found! Failing build."
               exit 1
             fi
-            
+
             echo "✅ Security scan completed"
           displayName: "Run Trivy Scan"
           env:
@@ -323,7 +328,7 @@ stages:
 # ================================
 - stage: Push
   displayName: "📤 Push to Registry"
-  dependsOn: 
+  dependsOn:
     - Build
     - Security_Scan
   condition: |
@@ -337,12 +342,12 @@ stages:
         eq(variables['Build.Reason'], 'Manual')
       )
     )
-  
+
   jobs:
     - job: PushImage
       displayName: "Push Docker Image to ECR"
-      timeoutInMinutes: 15
-      
+      timeoutInMinutes: 30
+
       steps:
         - checkout: self
           clean: true
@@ -350,15 +355,14 @@ stages:
 
         - script: |
             set -e
-            
+
             AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
             ECR_REGISTRY="$AWS_ACCOUNT_ID.dkr.ecr.$(AWS_DEFAULT_REGION).amazonaws.com"
             ECR_REPOSITORY="$ECR_REGISTRY/$(IMAGE_NAME)"
-            
+
             echo "##vso[task.setvariable variable=ECR_REGISTRY]$ECR_REGISTRY"
             echo "##vso[task.setvariable variable=ECR_REPOSITORY]$ECR_REPOSITORY"
-            
-            # Login to ECR
+
             aws ecr get-login-password --region $(AWS_DEFAULT_REGION) | \
               docker login --username AWS --password-stdin $ECR_REGISTRY
           displayName: "Login to ECR"
@@ -369,31 +373,59 @@ stages:
 
         - script: |
             set -e
+
             echo "====================================="
-            echo "  Push Docker Image to ECR"
+            echo "  Push Docker Image to ECR (Retry Enabled)"
             echo "====================================="
-            
-            # Push all tags
-            docker push $(ECR_REPOSITORY):$(IMAGE_TAG)
-            docker push $(ECR_REPOSITORY):latest
-            
-            # Push branch-specific tag
-            docker push $(ECR_REPOSITORY):$(Build.SourceBranchName)-$(IMAGE_TAG) || true
-            
+
+            export DOCKER_CLIENT_TIMEOUT=600
+            export COMPOSE_HTTP_TIMEOUT=600
+
+            retry_push() {
+              local image=$1
+              local retries=5
+              local wait_time=10
+
+              for i in $(seq 1 $retries); do
+                echo ""
+                echo "Attempt $i/$retries: docker push $image"
+
+                if docker push "$image"; then
+                  echo "✅ Push succeeded: $image"
+                  return 0
+                fi
+
+                echo "❌ Push failed: $image"
+                echo "Waiting $wait_time seconds before retry..."
+                sleep $wait_time
+                wait_time=$((wait_time * 2))
+              done
+
+              echo "🔥 Push failed after $retries attempts: $image"
+              return 1
+            }
+
+            echo "Pushing main tag..."
+            retry_push "$(ECR_REPOSITORY):$(IMAGE_TAG)"
+
+            echo "Pushing latest tag..."
+            docker tag "$(ECR_REPOSITORY):$(IMAGE_TAG)" "$(ECR_REPOSITORY):latest"
+            retry_push "$(ECR_REPOSITORY):latest"
+
+            echo "Pushing branch tag..."
+            BRANCH_TAG="$(Build.SourceBranchName)-$(IMAGE_TAG)"
+            docker tag "$(ECR_REPOSITORY):$(IMAGE_TAG)" "$(ECR_REPOSITORY):$BRANCH_TAG"
+            retry_push "$(ECR_REPOSITORY):$BRANCH_TAG" || true
+
             echo ""
-            echo "✅ Images pushed successfully"
-            echo ""
-            echo "Pushed images:"
-            echo "  - $(ECR_REPOSITORY):$(IMAGE_TAG)"
-            echo "  - $(ECR_REPOSITORY):latest"
-            echo "  - $(ECR_REPOSITORY):$(Build.SourceBranchName)-$(IMAGE_TAG)"
-          displayName: "Push Docker Image"
+            echo "✅ All pushes completed"
+          displayName: "Push Docker Image to ECR (Retry)"
 
         - script: |
             echo "====================================="
             echo "  Verify Pushed Images"
             echo "====================================="
-            
+
             aws ecr describe-images \
               --repository-name $(IMAGE_NAME) \
               --region $(AWS_DEFAULT_REGION) \
@@ -415,11 +447,11 @@ stages:
     - Security_Scan
     - Push
   condition: always()
-  
+
   jobs:
     - job: BuildSummary
       displayName: "Build Summary"
-      
+
       steps:
         - script: |
             echo "====================================="
@@ -435,8 +467,8 @@ stages:
             echo "  Stage Results"
             echo "====================================="
             echo "Build Stage: Completed"
-            echo "Security Scan: $(RUN_SECURITY_SCAN)"
-            echo "Push to Registry: $(PUSH_TO_REGISTRY)"
+            echo "Security Scan Enabled: $(RUN_SECURITY_SCAN)"
+            echo "Push Enabled: $(PUSH_TO_REGISTRY)"
             echo ""
             echo "✅ CI Pipeline completed"
           displayName: "Print Build Summary"
