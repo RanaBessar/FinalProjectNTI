@@ -44,6 +44,22 @@ spec:
             - name: http
               containerPort: {{ .Values.service.port }}
               protocol: TCP
+          env:
+            - name: NODE_ENV
+              value: {{ .Values.env.NODE_ENV | default "production" | quote }}
+            - name: PORT
+              value: {{ .Values.env.PORT | default "3000" | quote }}
+            {{- if .Values.secrets.mongodbUri }}
+            - name: MONGODB_URI
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "nti-app.fullname" . }}-secrets
+                  key: mongodb-uri
+            {{- end }}
+            {{- range $key, $value := .Values.env.extra }}
+            - name: {{ $key }}
+              value: {{ $value | quote }}
+            {{- end }}
           {{- with .Values.livenessProbe }}
           livenessProbe:
             {{- toYaml . | nindent 12 }}

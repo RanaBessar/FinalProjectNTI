@@ -174,3 +174,124 @@ resource "aws_eks_addon" "kube_proxy" {
 
   depends_on = [aws_eks_node_group.this]
 }
+
+# ================================
+# IRSA - Application Workload Role
+# ================================
+data "aws_iam_policy_document" "app_workload_assume_role" {
+  statement {
+    actions = ["sts:AssumeRoleWithWebIdentity"]
+    effect  = "Allow"
+
+    condition {
+      test     = "StringEquals"
+      variable = "${replace(aws_iam_openid_connect_provider.eks.url, "https://", "")}:sub"
+      values   = ["system:serviceaccount:${var.app_namespace}:${var.app_service_account}"]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "${replace(aws_iam_openid_connect_provider.eks.url, "https://", "")}:aud"
+      values   = ["sts.amazonaws.com"]
+    }
+
+    principals {
+      identifiers = [aws_iam_openid_connect_provider.eks.arn]
+      type        = "Federated"
+    }
+  }
+}
+
+resource "aws_iam_role" "app_workload" {
+  count              = var.create_app_irsa ? 1 : 0
+  name               = "${var.name_prefix}-${var.environment}-app-workload-role"
+  assume_role_policy = data.aws_iam_policy_document.app_workload_assume_role.json
+
+  tags = var.tags
+}
+
+# Policy for SSM Parameter Store access
+resource "aws_iam_policy" "app_ssm_access" {
+  count       = var.create_app_irsa ? 1 : 0
+  name        = "${var.name_prefix}-${var.environment}-app-ssm-access"
+  description = "Allow application to read SSM parameters"
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid    = "ReadSSMParameters"
+        Effect = "Allow"
+        Action = [
+          "ssm:GetParameter",
+          "ssm:GetParameters",
+          "ssm:GetParametersByPath"
+        ]
+        Resource = "arn:aws:ssm:*:*:parameter/${var.name_prefix}/${var.environment}/*"
+      },
+      {
+        Sid    = "DecryptSSMParameters"
+        Effect = "Allow"
+        Action = [
+          "kms:Decrypt",
+          "kms:DescribeKey"
+        ]
+        Resource = "*"
+        Condition = {
+          StringEquals = {
+            "kms:ViaService" = "ssm.*.amazonaws.com"
+          }
+        }
+      }
+    ]
+  })
+
+  tags = var.tags
+}
+
+resource "aws_iam_role_policy_attachment" "app_ssm_access" {
+  count      = var.create_app_irsa ? 1 : 0
+  role       = aws_iam_role.app_workload[0].name
+  policy_arn = aws_iam_policy.app_ssm_access[0].arn
+}
+
+# Policy for ECR read access
+resource "aws_iam_policy" "app_ecr_access" {
+  count       = var.create_app_irsa ? 1 : 0
+  name        = "${var.name_prefix}-${var.environment}-app-ecr-access"
+  description = "Allow application to pull images from ECR"
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid    = "ECRAuth"
+        Effect = "Allow"
+        Action = [
+          "ecr:GetAuthorizationToken"
+        ]
+        Resource = "*"
+      },
+      {
+        Sid    = "ECRPull"
+        Effect = "Allow"
+        Action = [
+          "ecr:BatchCheckLayerAvailability",
+          "ecr:GetDownloadUrlForLayer",
+          "ecr:BatchGetImage",
+          "ecr:DescribeImages",
+          "ecr:DescribeImageScanFindings"
+        ]
+        Resource = "arn:aws:ecr:*:*:repository/${var.name_prefix}-*"
+      }
+    ]
+  })
+
+  tags = var.tags
+}
+
+resource "aws_iam_role_policy_attachment" "app_ecr_access" {
+  count      = var.create_app_irsa ? 1 : 0
+  role       = aws_iam_role.app_workload[0].name
+  policy_arn = aws_iam_policy.app_ecr_access[0].arn
+}

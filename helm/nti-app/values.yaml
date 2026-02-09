@@ -159,3 +159,30 @@ nodeSelector: {}
 tolerations: []
 
 affinity: {}
+
+# ================================
+# Secrets Configuration
+# ================================
+secrets:
+  # MongoDB Atlas connection URI (injected from SSM)
+  mongodbUri: ""
+  # Additional secrets as key-value pairs
+  extra: {}
+
+# ================================
+# Environment Variables
+# ================================
+env:
+  # Standard environment variables
+  NODE_ENV: "production"
+  PORT: "3000"
+  # Additional env vars as key-value pairs
+  extra: {}
+
+# ================================
+# External Secrets (from SSM/Secrets Manager)
+# ================================
+externalSecrets:
+  enabled: false
+  # SSM Parameter Store path prefix
+  ssmPathPrefix: "/nti-final/nonprod"

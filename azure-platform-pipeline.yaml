@@ -50,6 +50,7 @@ variables:
   DEPLOY_VAULT: "true"
   DEPLOY_SONARQUBE: "true"
   DEPLOY_NEXUS: "true"
+  DEPLOY_DATADOG: "true"
   RUN_CLEANUP: "false"
   
   # Retry Configuration
@@ -499,6 +500,53 @@ stages:
             
             echo "✅ Nexus deployed successfully"
           displayName: "Deploy Nexus"
+
+        # ================================
+        # Deploy Datadog Agent
+        # ================================
+        - script: |
+            if [ "$(DEPLOY_DATADOG)" != "true" ]; then
+              echo "Skipping Datadog deployment (DEPLOY_DATADOG=false)"
+              exit 0
+            fi
+            
+            if [ -z "$(DATADOG_API_KEY)" ]; then
+              echo "⚠️ DATADOG_API_KEY not set, skipping Datadog deployment"
+              exit 0
+            fi
+            
+            export KUBECONFIG="$HOME/.kube/config"
+            
+            echo "====================================="
+            echo "  Deploy Datadog Agent"
+            echo "====================================="
+            
+            kubectl create namespace datadog --dry-run=client -o yaml | kubectl apply -f -
+            
+            # Add Datadog Helm repo
+            helm repo add datadog https://helm.datadoghq.com
+            helm repo update datadog
+            
+            # Deploy Datadog
+            helm upgrade --install datadog datadog/datadog \
+              --namespace datadog \
+              --values $(HELM_WORKING_DIR)/datadog/values.yaml \
+              --set datadog.apiKey=$(DATADOG_API_KEY) \
+              --set datadog.clusterName=$(CLUSTER_NAME) \
+              --timeout $(HELM_TIMEOUT) \
+              --wait
+            
+            echo ""
+            echo "Datadog Pods:"
+            kubectl get pods -n datadog
+            
+            echo "✅ Datadog Agent deployed successfully"
+          displayName: "Deploy Datadog"
+          env:
+            AWS_ACCESS_KEY_ID: $(AWS_ACCESS_KEY_ID)
+            AWS_SECRET_ACCESS_KEY: $(AWS_SECRET_ACCESS_KEY)
+            AWS_DEFAULT_REGION: $(AWS_DEFAULT_REGION)
+          continueOnError: true
 
 # ================================
 # Verification Stage

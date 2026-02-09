@@ -71,3 +71,22 @@ variable "kube_proxy_version" {
   description = "Version of the Kube Proxy addon"
   default     = "v1.29.0-eksbuild.1"
 }
+
+# IRSA Variables
+variable "create_app_irsa" {
+  type        = bool
+  description = "Create IRSA role for application workloads"
+  default     = true
+}
+
+variable "app_namespace" {
+  type        = string
+  description = "Kubernetes namespace for the application"
+  default     = "default"
+}
+
+variable "app_service_account" {
+  type        = string
+  description = "Kubernetes service account name for the application"
+  default     = "app-sa"
+}

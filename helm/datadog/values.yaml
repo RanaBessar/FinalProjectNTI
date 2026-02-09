@@ -1,0 +1,148 @@
+# ============================================================================
+# Datadog Agent Helm Chart Values
+# ============================================================================
+# Helm repo: https://helm.datadoghq.com
+# Chart: datadog/datadog
+
+datadog:
+  # API key - should be set via --set or environment variable
+  # apiKey: ""
+  
+  # Site configuration (datadoghq.com, datadoghq.eu, etc.)
+  site: datadoghq.com
+  
+  # Cluster name for identification
+  clusterName: nti-final-nonprod-eks
+  
+  # Enable logs collection
+  logs:
+    enabled: true
+    containerCollectAll: true
+    containerCollectUsingFiles: true
+  
+  # Enable APM (Application Performance Monitoring)
+  apm:
+    portEnabled: true
+    socketEnabled: true
+    enabled: true
+  
+  # Enable process monitoring
+  processAgent:
+    enabled: true
+    processCollection: true
+  
+  # Enable NPM (Network Performance Monitoring)
+  networkMonitoring:
+    enabled: true
+  
+  # Enable container monitoring
+  containerExclude: "kube_namespace:kube-system"
+  containerInclude: ""
+  
+  # Kubernetes integration
+  kubeStateMetricsEnabled: true
+  kubeStateMetricsCore:
+    enabled: true
+  
+  # Cluster checks
+  clusterChecks:
+    enabled: true
+  
+  # Orchestrator Explorer
+  orchestratorExplorer:
+    enabled: true
+  
+  # Kubernetes events
+  collectEvents: true
+  
+  # Leader election for cluster-level checks
+  leaderElection: true
+  
+  # Security Agent
+  securityAgent:
+    compliance:
+      enabled: true
+    runtime:
+      enabled: true
+
+# Cluster Agent configuration
+clusterAgent:
+  enabled: true
+  replicas: 2
+  
+  # Admission controller for APM auto-instrumentation
+  admissionController:
+    enabled: true
+    mutateUnlabelled: false
+  
+  # External metrics server
+  metricsProvider:
+    enabled: true
+    useDatadogMetrics: true
+  
+  resources:
+    requests:
+      cpu: 200m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+# Node Agent configuration
+agents:
+  enabled: true
+  
+  # Run as DaemonSet
+  rbac:
+    create: true
+    serviceAccountName: datadog-agent
+  
+  # Container resources
+  containers:
+    agent:
+      resources:
+        requests:
+          cpu: 200m
+          memory: 256Mi
+        limits:
+          cpu: 500m
+          memory: 512Mi
+    
+    processAgent:
+      resources:
+        requests:
+          cpu: 100m
+          memory: 128Mi
+        limits:
+          cpu: 200m
+          memory: 256Mi
+    
+    traceAgent:
+      resources:
+        requests:
+          cpu: 100m
+          memory: 128Mi
+        limits:
+          cpu: 200m
+          memory: 256Mi
+  
+  # Tolerations for control plane nodes
+  tolerations:
+    - key: node-role.kubernetes.io/control-plane
+      operator: Exists
+      effect: NoSchedule
+    - key: node-role.kubernetes.io/master
+      operator: Exists
+      effect: NoSchedule
+  
+  # Pod security
+  podSecurity:
+    seccompProfiles:
+      enabled: true
+
+# Kube State Metrics
+kube-state-metrics:
+  rbac:
+    create: true
+  serviceAccount:
+    create: true

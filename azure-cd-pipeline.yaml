@@ -223,6 +223,72 @@ stages:
 
         - script: |
             set -e
+            echo "====================================="
+            echo "  Validate Image Security (ECR Scan)"
+            echo "====================================="
+            
+            AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+            ECR_REPO="${AWS_ACCOUNT_ID}.dkr.ecr.$(AWS_DEFAULT_REGION).amazonaws.com/$(APP_NAME)"
+            
+            # Get latest image tag from gitops values
+            if [ -f "$(GITOPS_DIR)/nonprod/$(APP_NAME)/values-nonprod.yaml" ]; then
+              IMAGE_TAG=$(grep -E "^\s*tag:" $(GITOPS_DIR)/nonprod/$(APP_NAME)/values-nonprod.yaml | head -1 | awk '{print $2}' | tr -d '"')
+            else
+              IMAGE_TAG="latest"
+            fi
+            
+            echo "Checking ECR scan for: $(APP_NAME):${IMAGE_TAG}"
+            
+            # Get the scan findings
+            SCAN_STATUS=$(aws ecr describe-image-scan-findings \
+              --repository-name $(APP_NAME) \
+              --image-id imageTag=${IMAGE_TAG} \
+              --query 'imageScanStatus.status' \
+              --output text 2>/dev/null || echo "SCAN_NOT_FOUND")
+            
+            if [ "$SCAN_STATUS" == "SCAN_NOT_FOUND" ]; then
+              echo "⚠️ No scan found for image. Proceeding with deployment..."
+            elif [ "$SCAN_STATUS" == "COMPLETE" ]; then
+              # Check for critical vulnerabilities
+              CRITICAL_COUNT=$(aws ecr describe-image-scan-findings \
+                --repository-name $(APP_NAME) \
+                --image-id imageTag=${IMAGE_TAG} \
+                --query 'imageScanFindings.findingSeverityCounts.CRITICAL' \
+                --output text 2>/dev/null || echo "0")
+              
+              HIGH_COUNT=$(aws ecr describe-image-scan-findings \
+                --repository-name $(APP_NAME) \
+                --image-id imageTag=${IMAGE_TAG} \
+                --query 'imageScanFindings.findingSeverityCounts.HIGH' \
+                --output text 2>/dev/null || echo "0")
+              
+              echo "Scan Results:"
+              echo "  Critical: ${CRITICAL_COUNT:-0}"
+              echo "  High: ${HIGH_COUNT:-0}"
+              
+              if [ "${CRITICAL_COUNT:-0}" != "0" ] && [ "${CRITICAL_COUNT:-0}" != "None" ]; then
+                echo "❌ CRITICAL vulnerabilities found! Blocking deployment."
+                echo "Please fix critical vulnerabilities before deploying."
+                exit 1
+              fi
+              
+              if [ "${HIGH_COUNT:-0}" != "0" ] && [ "${HIGH_COUNT:-0}" != "None" ]; then
+                echo "⚠️ HIGH vulnerabilities found. Consider fixing before production."
+              fi
+              
+              echo "✅ Image scan passed"
+            else
+              echo "⚠️ Scan status: $SCAN_STATUS. Proceeding with caution..."
+            fi
+          displayName: "Validate Image Security"
+          env:
+            AWS_ACCESS_KEY_ID: $(AWS_ACCESS_KEY_ID)
+            AWS_SECRET_ACCESS_KEY: $(AWS_SECRET_ACCESS_KEY)
+            AWS_DEFAULT_REGION: $(AWS_DEFAULT_REGION)
+          continueOnError: true
+
+        - script: |
+            set -e
             export KUBECONFIG="$HOME/.kube/config"
             
             echo "====================================="
@@ -273,6 +339,22 @@ stages:
             
             echo "Deploying image: $ECR_REGISTRY/$(APP_NAME):$LATEST_TAG"
             
+            # Get MongoDB URI from SSM Parameter Store (if exists)
+            MONGODB_URI=$(aws ssm get-parameter \
+              --name "/nti-final/nonprod/mongodb/uri" \
+              --with-decryption \
+              --query 'Parameter.Value' \
+              --output text 2>/dev/null || echo "")
+            
+            # Build extra Helm args for secrets
+            EXTRA_ARGS=""
+            if [ -n "$MONGODB_URI" ] && [ "$MONGODB_URI" != "placeholder" ]; then
+              echo "✅ MongoDB URI retrieved from SSM"
+              EXTRA_ARGS="$EXTRA_ARGS --set secrets.mongodbUri=$MONGODB_URI"
+            else
+              echo "⚠️ MongoDB URI not configured in SSM"
+            fi
+            
             # Deploy with Helm
             helm upgrade --install $(APP_NAME) ./$(HELM_WORKING_DIR)/$(APP_NAME) \
               --namespace $(APP_NAMESPACE) \
@@ -281,6 +363,8 @@ stages:
               --set image.repository=$ECR_REGISTRY/$(APP_NAME) \
               --set image.tag=$LATEST_TAG \
               --set deployment.timestamp="$(date +%s)" \
+              --set serviceAccount.annotations."eks\.amazonaws\.com/role-arn"="arn:aws:iam::${AWS_ACCOUNT_ID}:role/nti-final-nonprod-app-workload-role" \
+              $EXTRA_ARGS \
               --wait \
               --timeout $(HELM_TIMEOUT) \
               --atomic

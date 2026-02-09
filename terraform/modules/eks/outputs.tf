@@ -24,3 +24,13 @@ output "ebs_csi_driver_role_arn" {
   value       = aws_iam_role.ebs_csi_driver.arn
   description = "The ARN of the EBS CSI Driver IAM Role"
 }
+
+output "app_workload_role_arn" {
+  value       = var.create_app_irsa ? aws_iam_role.app_workload[0].arn : null
+  description = "The ARN of the Application Workload IAM Role"
+}
+
+output "app_workload_role_name" {
+  value       = var.create_app_irsa ? aws_iam_role.app_workload[0].name : null
+  description = "The name of the Application Workload IAM Role"
+}
