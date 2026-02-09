@@ -1,5 +1,6 @@
 # SonarQube Helm Chart Values
-edition: community
+community:
+  enabled: true
 
 # Monitoring passcode (required by SonarQube)
 monitoringPasscode: "sonarqube-monitoring-passcode-12345"
