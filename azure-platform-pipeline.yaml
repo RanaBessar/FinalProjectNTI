@@ -6,6 +6,7 @@ trigger:
     include:
       - helm/vault/**
       - helm/sonarqube/**
+      - helm/nexus/**
       - helm/nginx-ingress-controller/**
       - helm/*-ingress.yaml
       - .azure-platform-pipeline.yaml
@@ -18,6 +19,8 @@ pool:
 variables:
   HELM_WORKING_DIR: "helm"
   AWS_DEFAULT_REGION: "us-east-1"
+  CLUSTER_NAME: "nti-final-nonprod-eks"   # <<< خلي اسم الكلاستر ثابت هنا
+  RUN_CLEANUP: "false"
 
 stages:
 
@@ -48,85 +51,43 @@ stages:
           inputs:
             kubectlVersion: "latest"
 
-        - script: |
-            echo "====================================="
-            echo " Debug: Check Variables"
-            echo "====================================="
-            
-            echo "AWS_DEFAULT_REGION: $(AWS_DEFAULT_REGION)"
-            echo "AWS_ACCESS_KEY_ID length: ${#AWS_ACCESS_KEY_ID}"
-            echo "AWS_SECRET_ACCESS_KEY length: ${#AWS_SECRET_ACCESS_KEY}"
-            
-            if [ -z "$AWS_ACCESS_KEY_ID" ]; then
-              echo "❌ ERROR: AWS_ACCESS_KEY_ID is NOT set!"
-              echo "   Please add to Pipeline Variables in Azure DevOps"
-              exit 1
-            fi
-            
-            if [ -z "$AWS_SECRET_ACCESS_KEY" ]; then
-              echo "❌ ERROR: AWS_SECRET_ACCESS_KEY is NOT set!"
-              echo "   Please add to Pipeline Variables in Azure DevOps"
-              exit 1
-            fi
-            
-            echo "✅ Both credentials appear to be set"
-          displayName: "Debug: Verify Variables"
-          env:
-            AWS_ACCESS_KEY_ID: $(AWS_ACCESS_KEY_ID)
-            AWS_SECRET_ACCESS_KEY: $(AWS_SECRET_ACCESS_KEY)
-
+        # ================================
+        # Validate AWS Credentials
+        # ================================
         - script: |
             echo "====================================="
             echo " Validate AWS Credentials"
             echo "====================================="
-            
+
             set -e
-            
-            # Test AWS CLI with credentials
             aws --version
-            
+
             echo "Testing AWS credentials..."
-            if aws sts get-caller-identity 2>&1 | grep -q "UnrecognizedClientException\|InvalidClientTokenId\|InvalidSignatureException"; then
-              echo "❌ ERROR: AWS credentials are INVALID or EXPIRED"
-              echo ""
-              echo "Troubleshooting steps:"
-              echo "1. Verify the Access Key ID in Azure DevOps is correct"
-              echo "2. Verify the Secret Access Key in Azure DevOps is correct (no extra spaces!)"
-              echo "3. If credentials are old (>90 days), regenerate them in AWS IAM"
-              echo "4. Test locally: aws sts get-caller-identity"
-              exit 1
-            fi
-            
             aws sts get-caller-identity
-            echo "✅ AWS credentials are valid"
+
+            echo " AWS credentials are valid"
           displayName: "Validate AWS Credentials"
           env:
             AWS_ACCESS_KEY_ID: $(AWS_ACCESS_KEY_ID)
             AWS_SECRET_ACCESS_KEY: $(AWS_SECRET_ACCESS_KEY)
             AWS_DEFAULT_REGION: $(AWS_DEFAULT_REGION)
 
+        # ================================
+        # Configure kubeconfig
+        # ================================
         - script: |
             echo "====================================="
             echo " Configure kubectl for EKS"
             echo "====================================="
 
-            CLUSTER_NAME=$(aws eks list-clusters --region $(AWS_DEFAULT_REGION) --query 'clusters[0]' --output text)
-            echo "Cluster Name: $CLUSTER_NAME"
-            
-            if [ -z "$CLUSTER_NAME" ] || [ "$CLUSTER_NAME" = "None" ]; then
-              echo "❌ ERROR: No EKS clusters found!"
-              echo ""
-              echo "Troubleshooting:"
-              echo "1. Run Infrastructure Pipeline first to create the EKS cluster"
-              echo "2. Verify cluster exists in AWS: aws eks list-clusters --region $(AWS_DEFAULT_REGION)"
-              exit 1
-            fi
+            set -e
 
+            echo "Cluster Name: $(CLUSTER_NAME)"
             mkdir -p $HOME/.kube
 
             aws eks update-kubeconfig \
               --region "$(AWS_DEFAULT_REGION)" \
-              --name "$CLUSTER_NAME" \
+              --name "$(CLUSTER_NAME)" \
               --kubeconfig "$HOME/.kube/config"
 
             export KUBECONFIG="$HOME/.kube/config"
@@ -138,173 +99,198 @@ stages:
           env:
             AWS_ACCESS_KEY_ID: $(AWS_ACCESS_KEY_ID)
             AWS_SECRET_ACCESS_KEY: $(AWS_SECRET_ACCESS_KEY)
-            AWS_SESSION_TOKEN: $(AWS_SESSION_TOKEN)
+
             AWS_DEFAULT_REGION: $(AWS_DEFAULT_REGION)
 
+        # ================================
+        # Add Helm Repositories
+        # ================================
         - script: |
-            set +e
             echo "====================================="
             echo " Add Helm Repositories"
             echo "====================================="
 
-            helm repo add stable https://charts.helm.sh/stable
+            set -e
+
             helm repo add hashicorp https://helm.releases.hashicorp.com
             helm repo add sonarqube https://SonarSource.github.io/helm-chart-sonarqube
             helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx
             helm repo add sonatype https://sonatype.github.io/helm3-charts
             helm repo add argo https://argoproj.github.io/argo-helm
 
-            echo "Updating Helm Repositories..."
             helm repo update
-
-            if [ $? -eq 0 ]; then
-              echo "Helm repositories updated successfully"
-            else
-              echo "Warning: Some repositories may have failed to update"
-            fi
+            echo " Helm repositories updated"
           displayName: "Add Helm Repositories"
 
+        # ================================
+        # Deploy Nginx Ingress Controller
+        # ================================
         - script: |
-            set -e
-            export KUBECONFIG="$HOME/.kube/config"
-
             echo "====================================="
             echo " Install Nginx Ingress Controller"
             echo "====================================="
+
+            set -e
+            export KUBECONFIG="$HOME/.kube/config"
 
             helm upgrade --install ingress-nginx ingress-nginx/ingress-nginx \
               --namespace ingress-nginx \
               --create-namespace \
               --values ./$(HELM_WORKING_DIR)/nginx-ingress-controller/values.yaml \
               --wait \
-              --timeout 10m
+              --timeout 15m
+
+            echo "Waiting for LoadBalancer..."
+            kubectl wait --namespace ingress-nginx \
+              --for=condition=available deployment/ingress-nginx-controller \
+              --timeout=600s
+
+            kubectl get svc -n ingress-nginx
           displayName: "Deploy Nginx Ingress Controller"
 
+        # ================================
+        # Deploy ArgoCD
+        # ================================
         - script: |
-            set -e
-            export KUBECONFIG="$HOME/.kube/config"
-
             echo "====================================="
             echo " Install ArgoCD"
             echo "====================================="
+
+            set -e
+            export KUBECONFIG="$HOME/.kube/config"
 
             helm upgrade --install argocd argo/argo-cd \
               --namespace argo \
               --create-namespace \
               --set server.service.type=ClusterIP \
-              --set server.ingress.enabled=true \
-              --set server.ingress.ingressClassName=nginx \
-              --set server.ingress.hosts[0]=argocd.local \
-              --set server.ingress.paths[0].path=/ \
-              --set server.ingress.paths[0].pathType=Prefix \
               --wait \
-              --timeout 10m
+              --timeout 15m
 
             kubectl apply -f ./$(HELM_WORKING_DIR)/argocd-ingress.yaml
+
+            kubectl get pods -n argo
+            kubectl get ingress -n argo
           displayName: "Deploy ArgoCD"
 
+        # ================================
+        # Deploy Vault
+        # ================================
         - script: |
-            set -e
-            export KUBECONFIG="$HOME/.kube/config"
-
             echo "====================================="
             echo " Install Vault"
             echo "====================================="
+
+            set -e
+            export KUBECONFIG="$HOME/.kube/config"
 
             helm upgrade --install vault hashicorp/vault \
               --namespace vault \
               --create-namespace \
               --values ./$(HELM_WORKING_DIR)/vault/values.yaml \
               --wait \
-              --timeout 10m
+              --timeout 15m
 
             kubectl apply -f ./$(HELM_WORKING_DIR)/vault-ingress.yaml
+
+            kubectl get pods -n vault
+            kubectl get ingress -n vault
           displayName: "Deploy Vault"
 
+        # ================================
+        # Deploy SonarQube
+        # ================================
         - script: |
-            set -e
-            export KUBECONFIG="$HOME/.kube/config"
-
             echo "====================================="
             echo " Install SonarQube"
             echo "====================================="
+
+            set -e
+            export KUBECONFIG="$HOME/.kube/config"
 
             helm upgrade --install sonarqube sonarqube/sonarqube \
               --namespace sonarqube \
               --create-namespace \
               --values ./$(HELM_WORKING_DIR)/sonarqube/values.yaml \
               --wait \
-              --timeout 15m
+              --timeout 20m
 
             kubectl apply -f ./$(HELM_WORKING_DIR)/sonarqube-ingress.yaml
+
+            kubectl get pods -n sonarqube
+            kubectl get ingress -n sonarqube
           displayName: "Deploy SonarQube"
 
+        # ================================
+        # Deploy Nexus
+        # ================================
         - script: |
-            set -e
-            export KUBECONFIG="$HOME/.kube/config"
-
             echo "====================================="
             echo " Install Nexus Repository Manager"
             echo "====================================="
 
-            helm upgrade --install nexus sonatype/nexus-repository-manager \
-              --namespace nexus \
-              --create-namespace \
-              --set nexusBackup.persistence.storageSize=10Gi \
-              --set persistence.storageSize=20Gi \
-              --wait \
-              --timeout 15m
-
-            kubectl apply -f ./$(HELM_WORKING_DIR)/nexus-ingress.yaml
-          displayName: "Deploy Nexus"
-
-        - script: |
             set -e
             export KUBECONFIG="$HOME/.kube/config"
 
+            helm upgrade --install nexus sonatype/nexus-repository-manager \
+              --namespace nexus \
+              --create-namespace \
+              --values ./$(HELM_WORKING_DIR)/nexus/values.yaml \
+              --wait \
+              --timeout 20m
+
+            kubectl apply -f ./$(HELM_WORKING_DIR)/nexus-ingress.yaml
+
+            kubectl get pods -n nexus
+            kubectl get pvc -n nexus
+            kubectl get ingress -n nexus
+          displayName: "Deploy Nexus"
+
+        # ================================
+        # Verify All Deployments
+        # ================================
+        - script: |
             echo "====================================="
             echo " Verify All Platform Deployments"
             echo "====================================="
 
+            set -e
+            export KUBECONFIG="$HOME/.kube/config"
+
             kubectl get ns
 
-            echo ""
-            echo "===== Nginx Ingress Controller ====="
-            kubectl get pods -n ingress-nginx || true
-            kubectl get svc -n ingress-nginx || true
+            echo "===== ingress-nginx ====="
+            kubectl get pods -n ingress-nginx
+            kubectl get svc -n ingress-nginx
 
-            echo ""
             echo "===== ArgoCD ====="
-            kubectl get pods -n argo || true
-            kubectl get svc -n argo || true
-            kubectl get ingress -n argo || true
+            kubectl get pods -n argo
+            kubectl get ingress -n argo
 
-            echo ""
             echo "===== Vault ====="
-            kubectl get pods -n vault || true
-            kubectl get svc -n vault || true
-            kubectl get ingress -n vault || true
+            kubectl get pods -n vault
+            kubectl get ingress -n vault
 
-            echo ""
             echo "===== SonarQube ====="
-            kubectl get pods -n sonarqube || true
-            kubectl get svc -n sonarqube || true
-            kubectl get ingress -n sonarqube || true
+            kubectl get pods -n sonarqube
+            kubectl get ingress -n sonarqube
 
-            echo ""
             echo "===== Nexus ====="
-            kubectl get pods -n nexus || true
-            kubectl get svc -n nexus || true
-            kubectl get ingress -n nexus || true
+            kubectl get pods -n nexus
+            kubectl get pvc -n nexus
+            kubectl get ingress -n nexus
+
+            echo "Platform deployment completed"
           displayName: "Verify All Platform Deployments"
 
+
 # ================================
-# Platform Cleanup Stage (Optional)
+# Platform Cleanup Stage
 # ================================
 - stage: Platform_Cleanup
   displayName: "Platform Cleanup Stage"
   dependsOn: Platform_Deploy
   condition: and(succeeded(), eq(variables['RUN_CLEANUP'], 'true'))
+
   jobs:
     - job: CleanupPlatform
       displayName: "Cleanup Platform Components"
@@ -328,21 +314,17 @@ stages:
             kubectlVersion: "latest"
 
         - script: |
-            set -e
             echo "====================================="
             echo " Configure kubeconfig for cleanup"
             echo "====================================="
 
-            aws sts get-caller-identity
-
-            CLUSTER_NAME=$(aws eks list-clusters --region $(AWS_DEFAULT_REGION) --query 'clusters[0]' --output text)
-            echo "Cluster Name: $CLUSTER_NAME"
+            set -e
 
             mkdir -p $HOME/.kube
 
             aws eks update-kubeconfig \
               --region "$(AWS_DEFAULT_REGION)" \
-              --name "$CLUSTER_NAME" \
+              --name "$(CLUSTER_NAME)" \
               --kubeconfig "$HOME/.kube/config"
 
             export KUBECONFIG="$HOME/.kube/config"
@@ -355,24 +337,24 @@ stages:
             AWS_DEFAULT_REGION: $(AWS_DEFAULT_REGION)
 
         - script: |
-            set +e
             echo "====================================="
             echo " Cleanup Helm Releases + Namespaces"
             echo "====================================="
 
+            set +e
             export KUBECONFIG="$HOME/.kube/config"
 
-            helm uninstall ingress-nginx -n ingress-nginx || true
-            helm uninstall argocd -n argo || true
-            helm uninstall vault -n vault || true
-            helm uninstall sonarqube -n sonarqube || true
-            helm uninstall nexus -n nexus || true
+            helm uninstall nexus -n nexus
+            helm uninstall sonarqube -n sonarqube
+            helm uninstall vault -n vault
+            helm uninstall argocd -n argo
+            helm uninstall ingress-nginx -n ingress-nginx
 
-            kubectl delete namespace ingress-nginx --ignore-not-found=true
-            kubectl delete namespace argo --ignore-not-found=true
-            kubectl delete namespace vault --ignore-not-found=true
-            kubectl delete namespace sonarqube --ignore-not-found=true
             kubectl delete namespace nexus --ignore-not-found=true
+            kubectl delete namespace sonarqube --ignore-not-found=true
+            kubectl delete namespace vault --ignore-not-found=true
+            kubectl delete namespace argo --ignore-not-found=true
+            kubectl delete namespace ingress-nginx --ignore-not-found=true
 
-            echo "Cleanup done."
+            echo " Cleanup done"
           displayName: "Cleanup Helm + Namespaces"
