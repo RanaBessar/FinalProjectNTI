@@ -241,7 +241,10 @@ stages:
             echo "====================================="
             
             if ! command -v trivy &> /dev/null; then
-              curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin
+              mkdir -p $HOME/bin
+              curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b $HOME/bin
+              export PATH=$HOME/bin:$PATH
+              echo "##vso[task.prependpath]$HOME/bin"
             fi
             
             trivy --version
