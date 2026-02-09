@@ -267,6 +267,9 @@ stages:
               ["argo"]="https://argoproj.github.io/argo-helm"
             )
             
+            # Remove deprecated stable repo if exists (causes timeouts)
+            helm repo remove stable 2>/dev/null || true
+            
             for repo in "${!REPOS[@]}"; do
               if helm repo list | grep -q "^$repo"; then
                 echo "Updating $repo..."
@@ -277,7 +280,6 @@ stages:
               fi
             done
             
-            helm repo update
             echo "✅ Helm repositories configured"
           displayName: "Add Helm Repositories"
 
