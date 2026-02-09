@@ -22,6 +22,16 @@ output "eks_cluster_certificate" {
   value = module.eks.cluster_certificate
 }
 
+output "eks_oidc_provider_arn" {
+  value       = module.eks.oidc_provider_arn
+  description = "The ARN of the OIDC Provider for IRSA"
+}
+
+output "ebs_csi_driver_role_arn" {
+  value       = module.eks.ebs_csi_driver_role_arn
+  description = "The ARN of the EBS CSI Driver IAM Role"
+}
+
 output "ecr_repository_url" {
   value = aws_ecr_repository.app_repo.repository_url
 }

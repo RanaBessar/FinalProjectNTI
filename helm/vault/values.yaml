@@ -21,10 +21,11 @@ vault:
         memory: "512Mi"
         cpu: "500m"
     
-    # Storage backend
+    # Storage backend - Use gp3 StorageClass
     dataStorage:
       size: 10Gi
       enabled: true
+      storageClass: gp3
     
     # HA Storage
     ha:
@@ -44,7 +45,8 @@ vault:
   injector:
     enabled: false
     
-  # Audit logs
+  # Audit logs - Use gp3 StorageClass
   auditStorage:
     enabled: true
     size: 5Gi
+    storageClass: gp3

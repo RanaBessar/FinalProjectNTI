@@ -28,11 +28,11 @@ resources:
     cpu: 1000m
     memory: 4Gi
 
-# Persistence
+# Persistence - Use gp3 StorageClass (EBS CSI Driver)
 persistence:
   enabled: true
   size: 20Gi
-  storageClassName: gp2
+  storageClassName: gp3
 
 # Database configuration (using embedded H2 for single instance)
 postgresql:
@@ -46,13 +46,21 @@ jdbcOverwrite:
 ingress:
   enabled: false
 
-# Security context
+# Init containers - disable sysctl init (requires privileged)
+initSysctl:
+  enabled: false
+
+initFs:
+  enabled: true
+
+# Security context - allow init containers to run
 securityContext:
-  fsGroup: 999
-  runAsUser: 999
-  runAsNonRoot: true
+  fsGroup: 1000
+
+containerSecurityContext:
+  runAsUser: 1000
+  runAsGroup: 1000
 
 # Additional plugins can be added here
 plugins:
-  install:
-    - "https://github.com/checkstyle/sonar-checkstyle/releases/download/10.0.1/sonar-checkstyle-10.0.1.jar"
+  install: []

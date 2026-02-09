@@ -1,18 +1,29 @@
+# ============================================================================
+# Azure DevOps CI Pipeline - Build, Scan & Push
+# ============================================================================
+# This pipeline builds Docker images, runs security scans, and pushes to ECR
+# Author: DevOps Team
+# Version: 2.0.0
+# ============================================================================
+
 trigger:
   branches:
     include:
       - main
+      - develop
+      - feature/*
   paths:
     include:
       - app/**
       - Dockerfile
       - .dockerignore
-      - .azure-ci-pipeline.yaml
+      - azure-ci-pipeline.yaml
 
 pr:
   branches:
     include:
       - main
+      - develop
   paths:
     include:
       - app/**
@@ -24,71 +35,79 @@ pool:
   demands:
     - agent.os -equals Linux
 
+# ================================
+# Pipeline Variables
+# ================================
 variables:
+  # AWS Configuration
   AWS_DEFAULT_REGION: "us-east-1"
+  
+  # Docker Configuration
   IMAGE_NAME: "nti-app"
   IMAGE_TAG: "$(Build.BuildId)"
   DOCKER_BUILDKIT: 1
+  
+  # Feature Flags
+  RUN_SECURITY_SCAN: "true"
+  RUN_UNIT_TESTS: "true"
+  PUSH_TO_REGISTRY: "true"
+  
+  # Security Scan Configuration
+  TRIVY_SEVERITY: "CRITICAL,HIGH"
+  FAIL_ON_CRITICAL: "false"
 
+# ================================
+# Stages
+# ================================
 stages:
 
 # ================================
 # Build Stage
 # ================================
 - stage: Build
-  displayName: "Build Docker Image"
+  displayName: "🔨 Build Stage"
   jobs:
-    - job: ValidateCredentials
-      displayName: "Validate Credentials"
-      timeoutInMinutes: 5
-      cancelTimeoutInMinutes: 5
-
+    - job: ValidateAndBuild
+      displayName: "Validate & Build Docker Image"
+      timeoutInMinutes: 30
+      
       steps:
+        - checkout: self
+          clean: true
+          fetchDepth: 1
+
+        - script: |
+            echo "====================================="
+            echo "  Pipeline Information"
+            echo "====================================="
+            echo "Build ID: $(Build.BuildId)"
+            echo "Branch: $(Build.SourceBranchName)"
+            echo "Commit: $(Build.SourceVersion)"
+            echo "Agent: $(Agent.Name)"
+            echo "====================================="
+          displayName: "Pipeline Information"
+
         - script: |
             set -e
-            echo "====================================="
-            echo " Validate AWS Credentials"
-            echo "====================================="
+            echo "Validating AWS credentials..."
             
             if [ -z "$AWS_ACCESS_KEY_ID" ] || [ -z "$AWS_SECRET_ACCESS_KEY" ]; then
-              echo "ERROR: AWS credentials not set!"
-              echo "Please set these in Azure DevOps Pipeline Variables:"
-              echo "  - AWS_ACCESS_KEY_ID"
-              echo "  - AWS_SECRET_ACCESS_KEY"
+              echo "❌ AWS credentials not set!"
               exit 1
             fi
             
             aws sts get-caller-identity
+            echo "✅ AWS credentials validated"
           displayName: "Validate AWS Credentials"
           env:
             AWS_ACCESS_KEY_ID: $(AWS_ACCESS_KEY_ID)
             AWS_SECRET_ACCESS_KEY: $(AWS_SECRET_ACCESS_KEY)
             AWS_DEFAULT_REGION: $(AWS_DEFAULT_REGION)
 
-    - job: BuildImage
-      displayName: "Build and Push Image"
-      dependsOn: ValidateCredentials
-      condition: succeeded()
-      timeoutInMinutes: 30
-      cancelTimeoutInMinutes: 5
-
-      workspace:
-        clean: all
-
-      steps:
-        - checkout: self
-
-        - script: |
-            echo "====================================="
-            echo " Verify Docker"
-            echo "====================================="
-            docker --version
-          displayName: "Verify Docker"
-
         - script: |
             set -e
             echo "====================================="
-            echo " Get ECR Repository URL"
+            echo "  Get ECR Repository Details"
             echo "====================================="
             
             AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
@@ -102,6 +121,7 @@ stages:
             echo "AWS Account ID: $AWS_ACCOUNT_ID"
             echo "ECR Registry: $ECR_REGISTRY"
             echo "ECR Repository: $ECR_REPOSITORY"
+            echo "Image Tag: $(IMAGE_TAG)"
           displayName: "Get ECR Details"
           env:
             AWS_ACCESS_KEY_ID: $(AWS_ACCESS_KEY_ID)
@@ -111,11 +131,13 @@ stages:
         - script: |
             set -e
             echo "====================================="
-            echo " Login to ECR"
+            echo "  Login to Amazon ECR"
             echo "====================================="
             
             aws ecr get-login-password --region $(AWS_DEFAULT_REGION) | \
               docker login --username AWS --password-stdin $(ECR_REGISTRY)
+            
+            echo "✅ ECR login successful"
           displayName: "Login to ECR"
           env:
             AWS_ACCESS_KEY_ID: $(AWS_ACCESS_KEY_ID)
@@ -125,119 +147,215 @@ stages:
         - script: |
             set -e
             echo "====================================="
-            echo " Build Docker Image"
+            echo "  Lint Dockerfile"
             echo "====================================="
             
-            docker build \
-              --build-arg BUILD_DATE=$(date -u +'%Y-%m-%dT%H:%M:%SZ') \
-              --build-arg VCS_REF=$(git rev-parse --short HEAD) \
-              --build-arg VERSION=$(IMAGE_TAG) \
-              -t $(ECR_REPOSITORY):$(IMAGE_TAG) \
-              -t $(ECR_REPOSITORY):latest \
-              -f Dockerfile \
-              .
-          displayName: "Build Docker Image"
+            # Install hadolint if not present
+            if ! command -v hadolint &> /dev/null; then
+              echo "Installing hadolint..."
+              wget -qO /tmp/hadolint https://github.com/hadolint/hadolint/releases/download/v2.12.0/hadolint-Linux-x86_64
+              chmod +x /tmp/hadolint
+              HADOLINT=/tmp/hadolint
+            else
+              HADOLINT=hadolint
+            fi
+            
+            if [ -f "Dockerfile" ]; then
+              echo "Linting Dockerfile..."
+              $HADOLINT Dockerfile || true
+              echo "✅ Dockerfile lint completed"
+            else
+              echo "⚠️ No Dockerfile found"
+            fi
+          displayName: "Lint Dockerfile"
+          continueOnError: true
 
         - script: |
             set -e
             echo "====================================="
-            echo " Image Information"
+            echo "  Build Docker Image"
             echo "====================================="
+            
+            BUILD_DATE=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
+            VCS_REF=$(git rev-parse --short HEAD)
+            
+            docker build \
+              --build-arg BUILD_DATE=$BUILD_DATE \
+              --build-arg VCS_REF=$VCS_REF \
+              --build-arg VERSION=$(IMAGE_TAG) \
+              --label "org.opencontainers.image.created=$BUILD_DATE" \
+              --label "org.opencontainers.image.revision=$VCS_REF" \
+              --label "org.opencontainers.image.version=$(IMAGE_TAG)" \
+              --label "org.opencontainers.image.source=$(Build.Repository.Uri)" \
+              -t $(ECR_REPOSITORY):$(IMAGE_TAG) \
+              -t $(ECR_REPOSITORY):latest \
+              -t $(ECR_REPOSITORY):$(Build.SourceBranchName)-$(IMAGE_TAG) \
+              -f Dockerfile \
+              .
+            
+            echo ""
+            echo "✅ Docker image built successfully"
+            echo ""
+            echo "Image details:"
             docker images | grep $(IMAGE_NAME)
-            docker inspect $(ECR_REPOSITORY):$(IMAGE_TAG)
-          displayName: "Show Image Information"
+          displayName: "Build Docker Image"
+
+        - script: |
+            echo "====================================="
+            echo "  Image Metadata"
+            echo "====================================="
+            
+            echo "Image: $(ECR_REPOSITORY):$(IMAGE_TAG)"
+            echo ""
+            docker inspect $(ECR_REPOSITORY):$(IMAGE_TAG) --format='{{json .Config.Labels}}' | jq . || true
+            echo ""
+            echo "Image size:"
+            docker images $(ECR_REPOSITORY):$(IMAGE_TAG) --format "{{.Size}}"
+          displayName: "Show Image Metadata"
 
 # ================================
 # Security Scan Stage
 # ================================
 - stage: Security_Scan
-  displayName: "Security Scan Stage"
+  displayName: "🔒 Security Scan"
   dependsOn: Build
-  condition: succeeded()
+  condition: and(succeeded(), eq(variables['RUN_SECURITY_SCAN'], 'true'))
+  
   jobs:
     - job: TrivyScan
       displayName: "Trivy Container Scan"
-      timeoutInMinutes: 30
-      cancelTimeoutInMinutes: 5
-
-      workspace:
-        clean: all
-
+      timeoutInMinutes: 20
+      
+      variables:
+        ECR_REPOSITORY: $[ stageDependencies.Build.ValidateAndBuild.outputs['GetECRDetails.ECR_REPOSITORY'] ]
+      
       steps:
         - checkout: self
+          clean: true
+          fetchDepth: 1
 
         - script: |
+            set -e
             echo "====================================="
-            echo " Install Trivy"
+            echo "  Install Trivy Scanner"
             echo "====================================="
             
-            curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin
+            if ! command -v trivy &> /dev/null; then
+              curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin
+            fi
+            
             trivy --version
           displayName: "Install Trivy"
 
         - script: |
             set -e
+            
+            AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+            ECR_REGISTRY="$AWS_ACCOUNT_ID.dkr.ecr.$(AWS_DEFAULT_REGION).amazonaws.com"
+            ECR_REPOSITORY="$ECR_REGISTRY/$(IMAGE_NAME)"
+            
+            # Login to ECR for scanning
+            aws ecr get-login-password --region $(AWS_DEFAULT_REGION) | \
+              docker login --username AWS --password-stdin $ECR_REGISTRY
+            
+            echo "##vso[task.setvariable variable=ECR_REPOSITORY]$ECR_REPOSITORY"
+          displayName: "Setup ECR Access"
+          env:
+            AWS_ACCESS_KEY_ID: $(AWS_ACCESS_KEY_ID)
+            AWS_SECRET_ACCESS_KEY: $(AWS_SECRET_ACCESS_KEY)
+            AWS_DEFAULT_REGION: $(AWS_DEFAULT_REGION)
+
+        - script: |
+            set -e
             echo "====================================="
-            echo " Scan Docker Image with Trivy"
+            echo "  Vulnerability Scan"
             echo "====================================="
             
-            mkdir -p $(Build.ArtifactStagingDirectory)/trivy-reports
+            mkdir -p $(Build.ArtifactStagingDirectory)/security-reports
             
-            # Scan for vulnerabilities
+            # Run comprehensive scan
             trivy image \
               --format json \
-              --output $(Build.ArtifactStagingDirectory)/trivy-reports/scan-results.json \
-              $(ECR_REGISTRY)/$(IMAGE_NAME):$(IMAGE_TAG) || true
+              --output $(Build.ArtifactStagingDirectory)/security-reports/trivy-results.json \
+              $(ECR_REPOSITORY):$(IMAGE_TAG)
             
             # Generate human-readable report
             trivy image \
               --format table \
-              --severity CRITICAL,HIGH \
-              $(ECR_REGISTRY)/$(IMAGE_NAME):$(IMAGE_TAG) || true
-          displayName: "Scan with Trivy"
+              --severity $(TRIVY_SEVERITY) \
+              $(ECR_REPOSITORY):$(IMAGE_TAG)
+            
+            # Check for critical vulnerabilities
+            CRITICAL_COUNT=$(trivy image --format json $(ECR_REPOSITORY):$(IMAGE_TAG) | jq '[.Results[]?.Vulnerabilities[]? | select(.Severity=="CRITICAL")] | length')
+            HIGH_COUNT=$(trivy image --format json $(ECR_REPOSITORY):$(IMAGE_TAG) | jq '[.Results[]?.Vulnerabilities[]? | select(.Severity=="HIGH")] | length')
+            
+            echo ""
+            echo "====================================="
+            echo "  Vulnerability Summary"
+            echo "====================================="
+            echo "CRITICAL: $CRITICAL_COUNT"
+            echo "HIGH: $HIGH_COUNT"
+            
+            if [ "$(FAIL_ON_CRITICAL)" = "true" ] && [ "$CRITICAL_COUNT" -gt 0 ]; then
+              echo "❌ Critical vulnerabilities found! Failing build."
+              exit 1
+            fi
+            
+            echo "✅ Security scan completed"
+          displayName: "Run Trivy Scan"
           env:
             AWS_ACCESS_KEY_ID: $(AWS_ACCESS_KEY_ID)
             AWS_SECRET_ACCESS_KEY: $(AWS_SECRET_ACCESS_KEY)
             AWS_DEFAULT_REGION: $(AWS_DEFAULT_REGION)
 
         - task: PublishBuildArtifacts@1
-          displayName: "Publish Trivy Reports"
+          displayName: "Publish Security Reports"
           inputs:
-            pathToPublish: $(Build.ArtifactStagingDirectory)/trivy-reports
-            artifactName: trivy-scan-results
-          condition: always()
+            PathtoPublish: "$(Build.ArtifactStagingDirectory)/security-reports"
+            ArtifactName: "security-reports"
+            publishLocation: "Container"
 
 # ================================
 # Push Stage
 # ================================
 - stage: Push
-  displayName: "Push Image Stage"
-  dependsOn: Security_Scan
-  condition: succeeded()
+  displayName: "📤 Push to Registry"
+  dependsOn: 
+    - Build
+    - Security_Scan
+  condition: |
+    and(
+      succeeded('Build'),
+      or(succeeded('Security_Scan'), eq(variables['RUN_SECURITY_SCAN'], 'false')),
+      eq(variables['PUSH_TO_REGISTRY'], 'true'),
+      or(
+        eq(variables['Build.SourceBranch'], 'refs/heads/main'),
+        eq(variables['Build.SourceBranch'], 'refs/heads/develop'),
+        eq(variables['Build.Reason'], 'Manual')
+      )
+    )
+  
   jobs:
     - job: PushImage
-      displayName: "Push to ECR"
+      displayName: "Push Docker Image to ECR"
       timeoutInMinutes: 15
-      cancelTimeoutInMinutes: 5
-
-      workspace:
-        clean: all
-
+      
       steps:
         - checkout: self
+          clean: true
+          fetchDepth: 1
 
         - script: |
             set -e
-            echo "====================================="
-            echo " Login to ECR"
-            echo "====================================="
             
             AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
             ECR_REGISTRY="$AWS_ACCOUNT_ID.dkr.ecr.$(AWS_DEFAULT_REGION).amazonaws.com"
             ECR_REPOSITORY="$ECR_REGISTRY/$(IMAGE_NAME)"
             
+            echo "##vso[task.setvariable variable=ECR_REGISTRY]$ECR_REGISTRY"
             echo "##vso[task.setvariable variable=ECR_REPOSITORY]$ECR_REPOSITORY"
             
+            # Login to ECR
             aws ecr get-login-password --region $(AWS_DEFAULT_REGION) | \
               docker login --username AWS --password-stdin $ECR_REGISTRY
           displayName: "Login to ECR"
@@ -249,30 +367,73 @@ stages:
         - script: |
             set -e
             echo "====================================="
-            echo " Push Docker Image to ECR"
+            echo "  Push Docker Image to ECR"
             echo "====================================="
             
+            # Push all tags
             docker push $(ECR_REPOSITORY):$(IMAGE_TAG)
             docker push $(ECR_REPOSITORY):latest
             
-            echo "Image pushed successfully:"
-            echo "  Tag: $(IMAGE_TAG)"
-            echo "  Latest: yes"
+            # Push branch-specific tag
+            docker push $(ECR_REPOSITORY):$(Build.SourceBranchName)-$(IMAGE_TAG) || true
+            
+            echo ""
+            echo "✅ Images pushed successfully"
+            echo ""
+            echo "Pushed images:"
+            echo "  - $(ECR_REPOSITORY):$(IMAGE_TAG)"
+            echo "  - $(ECR_REPOSITORY):latest"
+            echo "  - $(ECR_REPOSITORY):$(Build.SourceBranchName)-$(IMAGE_TAG)"
           displayName: "Push Docker Image"
 
         - script: |
-            set -e
             echo "====================================="
-            echo " Verify Image in ECR"
+            echo "  Verify Pushed Images"
             echo "====================================="
             
             aws ecr describe-images \
               --repository-name $(IMAGE_NAME) \
               --region $(AWS_DEFAULT_REGION) \
-              --query 'imageDetails[*].[imageTags,imagePushedAt]' \
+              --query 'imageDetails[?contains(imageTags, `$(IMAGE_TAG)`)].{Tags:imageTags,Pushed:imagePushedAt,Size:imageSizeInBytes}' \
               --output table
-          displayName: "Verify ECR Image"
+          displayName: "Verify Pushed Images"
           env:
             AWS_ACCESS_KEY_ID: $(AWS_ACCESS_KEY_ID)
             AWS_SECRET_ACCESS_KEY: $(AWS_SECRET_ACCESS_KEY)
             AWS_DEFAULT_REGION: $(AWS_DEFAULT_REGION)
+
+# ================================
+# Notify Stage
+# ================================
+- stage: Notify
+  displayName: "📢 Notify"
+  dependsOn:
+    - Build
+    - Security_Scan
+    - Push
+  condition: always()
+  
+  jobs:
+    - job: BuildSummary
+      displayName: "Build Summary"
+      
+      steps:
+        - script: |
+            echo "====================================="
+            echo "  CI Pipeline Summary"
+            echo "====================================="
+            echo ""
+            echo "Build ID: $(Build.BuildId)"
+            echo "Branch: $(Build.SourceBranchName)"
+            echo "Commit: $(Build.SourceVersion)"
+            echo "Image Tag: $(IMAGE_TAG)"
+            echo ""
+            echo "====================================="
+            echo "  Stage Results"
+            echo "====================================="
+            echo "Build Stage: Completed"
+            echo "Security Scan: $(RUN_SECURITY_SCAN)"
+            echo "Push to Registry: $(PUSH_TO_REGISTRY)"
+            echo ""
+            echo "✅ CI Pipeline completed"
+          displayName: "Print Build Summary"

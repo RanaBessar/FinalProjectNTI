@@ -46,3 +46,28 @@ variable "tags" {
   type    = map(string)
   default = {}
 }
+
+# EKS Addon Versions
+variable "ebs_csi_driver_version" {
+  type        = string
+  description = "Version of the EBS CSI Driver addon"
+  default     = "v1.28.0-eksbuild.1"
+}
+
+variable "vpc_cni_version" {
+  type        = string
+  description = "Version of the VPC CNI addon"
+  default     = "v1.16.0-eksbuild.1"
+}
+
+variable "coredns_version" {
+  type        = string
+  description = "Version of the CoreDNS addon"
+  default     = "v1.11.1-eksbuild.6"
+}
+
+variable "kube_proxy_version" {
+  type        = string
+  description = "Version of the Kube Proxy addon"
+  default     = "v1.29.0-eksbuild.1"
+}
