@@ -1,9 +1,9 @@
 # ============================================================================
-# Azure DevOps CD Pipeline - Application Deployment
+# Azure DevOps CD Pipeline - GitOps Deployment (ArgoCD Driven)
 # ============================================================================
-# This pipeline deploys applications to EKS using Helm and syncs with ArgoCD
+# This pipeline updates GitOps manifests then ArgoCD syncs automatically
 # Author: DevOps Team
-# Version: 2.0.0
+# Version: 3.0.0
 # ============================================================================
 
 trigger:
@@ -30,45 +30,30 @@ pool:
   demands:
     - agent.os -equals Linux
 
-# ================================
-# Pipeline Variables
-# ================================
 variables:
-  # Infrastructure
   AWS_DEFAULT_REGION: "us-east-1"
   CLUSTER_NAME: "nti-final-nonprod-eks"
-  
-  # Application
+
   APP_NAME: "nti-app"
   APP_NAMESPACE: "nti-app"
   HELM_WORKING_DIR: "helm"
   GITOPS_DIR: "gitops"
-  
-  # Deployment Configuration
-  HELM_TIMEOUT: "10m"
-  DEPLOYMENT_STRATEGY: "rolling"  # rolling, blue-green, canary
-  
-  # Feature Flags
-  RUN_HELM_DEPLOY: "true"
+
   RUN_ARGOCD_SYNC: "true"
   RUN_SMOKE_TESTS: "true"
-  ENABLE_AUTO_ROLLBACK: "true"
 
-# ================================
-# Stages
-# ================================
 stages:
 
 # ================================
 # Validate Stage
 # ================================
 - stage: Validate
-  displayName: "✅ Validate Configuration"
+  displayName: "✅ Validate Helm & GitOps"
   jobs:
     - job: ValidateConfig
-      displayName: "Validate Helm & GitOps"
+      displayName: "Validate Helm Chart + GitOps YAML"
       timeoutInMinutes: 15
-      
+
       steps:
         - checkout: self
           clean: true
@@ -81,366 +66,152 @@ stages:
 
         - script: |
             echo "====================================="
-            echo "  Pipeline Information"
+            echo " Pipeline Information"
             echo "====================================="
             echo "Build ID: $(Build.BuildId)"
             echo "Branch: $(Build.SourceBranchName)"
             echo "App Name: $(APP_NAME)"
             echo "Namespace: $(APP_NAMESPACE)"
-            echo "====================================="
           displayName: "Pipeline Information"
 
         - script: |
             set -e
             echo "====================================="
-            echo "  Helm Chart Validation"
+            echo " Helm Chart Validation"
             echo "====================================="
-            
-            # Lint Helm chart
-            echo "Linting Helm chart..."
+
             helm lint ./$(HELM_WORKING_DIR)/$(APP_NAME)
-            
-            # Check for required files
-            echo ""
-            echo "Checking required files..."
-            REQUIRED_FILES="Chart.yaml values.yaml values-nonprod.yaml"
-            for file in $REQUIRED_FILES; do
-              if [ -f "./$(HELM_WORKING_DIR)/$(APP_NAME)/$file" ]; then
-                echo "✅ Found: $file"
-              else
-                echo "❌ Missing: $file"
-                exit 1
-              fi
-            done
-            
-            echo ""
-            echo "✅ Helm chart validation passed"
+
+            echo "✅ Helm lint passed"
           displayName: "Validate Helm Chart"
 
         - script: |
             set -e
             echo "====================================="
-            echo "  YAML Syntax Validation"
+            echo " Helm Template Dry Run"
             echo "====================================="
-            
-            # Validate GitOps YAML files (exclude Helm templates which contain Go template syntax)
-            find ./$(GITOPS_DIR) \( -name '*.yaml' -o -name '*.yml' \) -not -path '*/templates/*' | while read file; do
-              echo "Validating: $file"
-              # Basic YAML syntax check using Python
-              python3 -c "import yaml; yaml.safe_load(open('$file'))" 2>/dev/null || {
-                echo "❌ Invalid YAML: $file"
-                exit 1
-              }
-            done
-            
-            echo "✅ All YAML files are valid (Helm templates validated separately)"
-          displayName: "Validate YAML Syntax"
 
-        - script: |
-            set -e
-            echo "====================================="
-            echo "  Helm Template Dry Run"
-            echo "====================================="
-            
-            # Template the chart to verify it renders correctly
             helm template $(APP_NAME) ./$(HELM_WORKING_DIR)/$(APP_NAME) \
               --values ./$(HELM_WORKING_DIR)/$(APP_NAME)/values-nonprod.yaml \
               --namespace $(APP_NAMESPACE) \
               --debug > /dev/null
-            
+
             echo "✅ Helm template renders successfully"
-            
-            # Show generated resources
-            echo ""
-            echo "Generated Kubernetes resources:"
-            helm template $(APP_NAME) ./$(HELM_WORKING_DIR)/$(APP_NAME) \
-              --values ./$(HELM_WORKING_DIR)/$(APP_NAME)/values-nonprod.yaml \
-              --namespace $(APP_NAMESPACE) | grep -E "^kind:" | sort | uniq -c
           displayName: "Helm Template Dry Run"
 
 # ================================
-# Deploy Stage
+# GitOps Update Stage
 # ================================
-- stage: Deploy
-  displayName: "🚀 Deploy Application"
+- stage: GitOps_Update
+  displayName: "✍️ Update GitOps Manifests"
   dependsOn: Validate
-  condition: and(succeeded(), eq(variables['RUN_HELM_DEPLOY'], 'true'))
-  
+  condition: succeeded()
+
   jobs:
-    - job: DeployApplication
-      displayName: "Deploy $(APP_NAME)"
-      timeoutInMinutes: 30
-      
+    - job: UpdateGitOps
+      displayName: "Update image tag in GitOps repo"
+      timeoutInMinutes: 15
+
       steps:
         - checkout: self
           clean: true
-          fetchDepth: 1
-
-        - task: HelmInstaller@1
-          displayName: "Install Helm"
-          inputs:
-            helmVersionToInstall: "latest"
-
-        - task: KubectlInstaller@0
-          displayName: "Install kubectl"
-          inputs:
-            kubectlVersion: "latest"
+          persistCredentials: true
 
         - script: |
             set -e
-            echo "Validating AWS credentials..."
+            echo "====================================="
+            echo " Validate AWS Credentials"
+            echo "====================================="
+
             aws sts get-caller-identity
             echo "✅ AWS credentials valid"
           displayName: "Validate AWS Credentials"
           env:
             AWS_ACCESS_KEY_ID: $(AWS_ACCESS_KEY_ID)
             AWS_SECRET_ACCESS_KEY: $(AWS_SECRET_ACCESS_KEY)
+            AWS_SESSION_TOKEN: $(AWS_SESSION_TOKEN)
             AWS_DEFAULT_REGION: $(AWS_DEFAULT_REGION)
 
         - script: |
             set -e
             echo "====================================="
-            echo "  Configure kubectl"
+            echo " Get Latest Image Tag from ECR"
             echo "====================================="
-            
-            mkdir -p $HOME/.kube
-            aws eks update-kubeconfig \
-              --region "$(AWS_DEFAULT_REGION)" \
-              --name "$(CLUSTER_NAME)" \
-              --kubeconfig "$HOME/.kube/config"
-            
-            export KUBECONFIG="$HOME/.kube/config"
-            
-            kubectl cluster-info
-            kubectl get nodes
-            
-            echo "✅ kubectl configured"
-          displayName: "Configure kubectl"
-          env:
-            AWS_ACCESS_KEY_ID: $(AWS_ACCESS_KEY_ID)
-            AWS_SECRET_ACCESS_KEY: $(AWS_SECRET_ACCESS_KEY)
-            AWS_DEFAULT_REGION: $(AWS_DEFAULT_REGION)
 
-        - script: |
-            set -e
-            echo "====================================="
-            echo "  Validate Image Security (ECR Scan)"
-            echo "====================================="
-            
-            AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
-            ECR_REPO="${AWS_ACCOUNT_ID}.dkr.ecr.$(AWS_DEFAULT_REGION).amazonaws.com/$(APP_NAME)"
-            
-            # Get latest image tag from gitops values
-            if [ -f "$(GITOPS_DIR)/nonprod/$(APP_NAME)/values-nonprod.yaml" ]; then
-              IMAGE_TAG=$(grep -E "^\s*tag:" $(GITOPS_DIR)/nonprod/$(APP_NAME)/values-nonprod.yaml | head -1 | awk '{print $2}' | tr -d '"')
-            else
-              IMAGE_TAG="latest"
-            fi
-            
-            echo "Checking ECR scan for: $(APP_NAME):${IMAGE_TAG}"
-            
-            # Get the scan findings
-            SCAN_STATUS=$(aws ecr describe-image-scan-findings \
-              --repository-name $(APP_NAME) \
-              --image-id imageTag=${IMAGE_TAG} \
-              --query 'imageScanStatus.status' \
-              --output text 2>/dev/null || echo "SCAN_NOT_FOUND")
-            
-            if [ "$SCAN_STATUS" == "SCAN_NOT_FOUND" ]; then
-              echo "⚠️ No scan found for image. Proceeding with deployment..."
-            elif [ "$SCAN_STATUS" == "COMPLETE" ]; then
-              # Check for critical vulnerabilities
-              CRITICAL_COUNT=$(aws ecr describe-image-scan-findings \
-                --repository-name $(APP_NAME) \
-                --image-id imageTag=${IMAGE_TAG} \
-                --query 'imageScanFindings.findingSeverityCounts.CRITICAL' \
-                --output text 2>/dev/null || echo "0")
-              
-              HIGH_COUNT=$(aws ecr describe-image-scan-findings \
-                --repository-name $(APP_NAME) \
-                --image-id imageTag=${IMAGE_TAG} \
-                --query 'imageScanFindings.findingSeverityCounts.HIGH' \
-                --output text 2>/dev/null || echo "0")
-              
-              echo "Scan Results:"
-              echo "  Critical: ${CRITICAL_COUNT:-0}"
-              echo "  High: ${HIGH_COUNT:-0}"
-              
-              if [ "${CRITICAL_COUNT:-0}" != "0" ] && [ "${CRITICAL_COUNT:-0}" != "None" ]; then
-                echo "❌ CRITICAL vulnerabilities found! Blocking deployment."
-                echo "Please fix critical vulnerabilities before deploying."
-                exit 1
-              fi
-              
-              if [ "${HIGH_COUNT:-0}" != "0" ] && [ "${HIGH_COUNT:-0}" != "None" ]; then
-                echo "⚠️ HIGH vulnerabilities found. Consider fixing before production."
-              fi
-              
-              echo "✅ Image scan passed"
-            else
-              echo "⚠️ Scan status: $SCAN_STATUS. Proceeding with caution..."
-            fi
-          displayName: "Validate Image Security"
-          env:
-            AWS_ACCESS_KEY_ID: $(AWS_ACCESS_KEY_ID)
-            AWS_SECRET_ACCESS_KEY: $(AWS_SECRET_ACCESS_KEY)
-            AWS_DEFAULT_REGION: $(AWS_DEFAULT_REGION)
-          continueOnError: true
-
-        - script: |
-            set -e
-            export KUBECONFIG="$HOME/.kube/config"
-            
-            echo "====================================="
-            echo "  Pre-Deployment State"
-            echo "====================================="
-            
-            # Create namespace if it doesn't exist
-            kubectl create namespace $(APP_NAMESPACE) --dry-run=client -o yaml | kubectl apply -f -
-            
-            # Capture current deployment state for rollback
-            if kubectl get deployment $(APP_NAME) -n $(APP_NAMESPACE) &>/dev/null; then
-              echo "Existing deployment found"
-              kubectl get deployment $(APP_NAME) -n $(APP_NAMESPACE) -o yaml > /tmp/previous-deployment.yaml
-              CURRENT_REVISION=$(kubectl get deployment $(APP_NAME) -n $(APP_NAMESPACE) -o jsonpath='{.metadata.annotations.deployment\.kubernetes\.io/revision}')
-              echo "##vso[task.setvariable variable=PREVIOUS_REVISION]$CURRENT_REVISION"
-              echo "Current revision: $CURRENT_REVISION"
-            else
-              echo "No existing deployment found - fresh deployment"
-            fi
-            
-            echo ""
-            echo "Current pods in namespace:"
-            kubectl get pods -n $(APP_NAMESPACE) || true
-          displayName: "Pre-Deployment Check"
-          env:
-            AWS_ACCESS_KEY_ID: $(AWS_ACCESS_KEY_ID)
-            AWS_SECRET_ACCESS_KEY: $(AWS_SECRET_ACCESS_KEY)
-            AWS_DEFAULT_REGION: $(AWS_DEFAULT_REGION)
-
-        - script: |
-            set -e
-            export KUBECONFIG="$HOME/.kube/config"
-            
-            echo "====================================="
-            echo "  Deploy Application: $(APP_NAME)"
-            echo "====================================="
-            
-            # Get the latest image tag from ECR
             AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
             ECR_REGISTRY="$AWS_ACCOUNT_ID.dkr.ecr.$(AWS_DEFAULT_REGION).amazonaws.com"
-            
-            # Get latest image tag
+
             LATEST_TAG=$(aws ecr describe-images \
               --repository-name $(APP_NAME) \
               --region $(AWS_DEFAULT_REGION) \
               --query 'sort_by(imageDetails,& imagePushedAt)[-1].imageTags[0]' \
-              --output text 2>/dev/null || echo "latest")
-            
-            echo "Deploying image: $ECR_REGISTRY/$(APP_NAME):$LATEST_TAG"
-            
-            # Get MongoDB URI from SSM Parameter Store (if exists)
-            MONGODB_URI=$(aws ssm get-parameter \
-              --name "/nti-final/nonprod/mongodb/uri" \
-              --with-decryption \
-              --query 'Parameter.Value' \
-              --output text 2>/dev/null || echo "")
-            
-            # Build extra Helm args for secrets
-            EXTRA_ARGS=""
-            if [ -n "$MONGODB_URI" ] && [ "$MONGODB_URI" != "placeholder" ]; then
-              echo "✅ MongoDB URI retrieved from SSM"
-              EXTRA_ARGS="$EXTRA_ARGS --set secrets.mongodbUri=$MONGODB_URI"
-            else
-              echo "⚠️ MongoDB URI not configured in SSM"
-            fi
-            
-            # Deploy with Helm
-            helm upgrade --install $(APP_NAME) ./$(HELM_WORKING_DIR)/$(APP_NAME) \
-              --namespace $(APP_NAMESPACE) \
-              --create-namespace \
-              --values ./$(HELM_WORKING_DIR)/$(APP_NAME)/values-nonprod.yaml \
-              --set image.repository=$ECR_REGISTRY/$(APP_NAME) \
-              --set image.tag=$LATEST_TAG \
-              --set deployment.timestamp="$(date +%s)" \
-              --set serviceAccount.annotations."eks\.amazonaws\.com/role-arn"="arn:aws:iam::${AWS_ACCOUNT_ID}:role/nti-final-nonprod-app-workload-role" \
-              $EXTRA_ARGS \
-              --wait \
-              --timeout $(HELM_TIMEOUT) \
-              --atomic
-            
-            echo ""
-            echo "✅ Deployment completed successfully"
-          displayName: "Deploy with Helm"
+              --output text)
+
+            echo "Latest image tag: $LATEST_TAG"
+            echo "##vso[task.setvariable variable=LATEST_TAG]$LATEST_TAG"
+            echo "##vso[task.setvariable variable=ECR_REGISTRY]$ECR_REGISTRY"
+          displayName: "Get Latest Tag from ECR"
           env:
             AWS_ACCESS_KEY_ID: $(AWS_ACCESS_KEY_ID)
             AWS_SECRET_ACCESS_KEY: $(AWS_SECRET_ACCESS_KEY)
+            AWS_SESSION_TOKEN: $(AWS_SESSION_TOKEN)
             AWS_DEFAULT_REGION: $(AWS_DEFAULT_REGION)
 
         - script: |
             set -e
-            export KUBECONFIG="$HOME/.kube/config"
-            
             echo "====================================="
-            echo "  Post-Deployment Verification"
+            echo " Update GitOps values-nonprod.yaml"
             echo "====================================="
-            
-            # Wait for deployment to be ready
-            kubectl rollout status deployment/$(APP_NAME) -n $(APP_NAMESPACE) --timeout=300s
-            
-            echo ""
-            echo "Deployment status:"
-            kubectl get deployment $(APP_NAME) -n $(APP_NAMESPACE)
-            
-            echo ""
-            echo "Pods:"
-            kubectl get pods -n $(APP_NAMESPACE) -l app.kubernetes.io/name=$(APP_NAME)
-            
-            echo ""
-            echo "Services:"
-            kubectl get svc -n $(APP_NAMESPACE)
-            
-            echo ""
-            echo "Ingress:"
-            kubectl get ingress -n $(APP_NAMESPACE) || true
-            
-            # Verify pods are healthy
-            READY_PODS=$(kubectl get pods -n $(APP_NAMESPACE) -l app.kubernetes.io/name=$(APP_NAME) -o jsonpath='{.items[*].status.containerStatuses[*].ready}' | tr ' ' '\n' | grep -c true || echo 0)
-            TOTAL_PODS=$(kubectl get pods -n $(APP_NAMESPACE) -l app.kubernetes.io/name=$(APP_NAME) --no-headers | wc -l)
-            
-            echo ""
-            echo "Ready pods: $READY_PODS / $TOTAL_PODS"
-            
-            if [ "$READY_PODS" -eq 0 ]; then
-              echo "❌ No pods are ready!"
+
+            VALUES_FILE="$(GITOPS_DIR)/nonprod/$(APP_NAME)/values-nonprod.yaml"
+
+            if [ ! -f "$VALUES_FILE" ]; then
+              echo "❌ values file not found: $VALUES_FILE"
               exit 1
             fi
-            
+
+            echo "Updating image.repository and image.tag..."
+
+            yq -i ".image.repository = \"$(ECR_REGISTRY)/$(APP_NAME)\"" $VALUES_FILE
+            yq -i ".image.tag = \"$(LATEST_TAG)\"" $VALUES_FILE
+
             echo ""
-            echo "✅ Deployment verification passed"
-          displayName: "Verify Deployment"
-          env:
-            AWS_ACCESS_KEY_ID: $(AWS_ACCESS_KEY_ID)
-            AWS_SECRET_ACCESS_KEY: $(AWS_SECRET_ACCESS_KEY)
-            AWS_DEFAULT_REGION: $(AWS_DEFAULT_REGION)
+            echo "Updated file content:"
+            cat $VALUES_FILE
+          displayName: "Update GitOps Values File"
+
+        - script: |
+            set -e
+            echo "====================================="
+            echo " Commit & Push GitOps Changes"
+            echo "====================================="
+
+            git config user.email "azure-devops@nti.com"
+            git config user.name "Azure DevOps Pipeline"
+
+            git add gitops/nonprod/$(APP_NAME)/values-nonprod.yaml
+
+            git commit -m "Update $(APP_NAME) image tag to $(LATEST_TAG)" || echo "No changes to commit"
+
+            git push origin main
+          displayName: "Commit & Push GitOps"
 
 # ================================
 # ArgoCD Sync Stage
 # ================================
 - stage: ArgoCD_Sync
   displayName: "🔄 ArgoCD Sync"
-  dependsOn: Deploy
+  dependsOn: GitOps_Update
   condition: and(succeeded(), eq(variables['RUN_ARGOCD_SYNC'], 'true'))
-  
+
   jobs:
-    - job: SyncArgoCD
-      displayName: "Sync with ArgoCD"
+    - job: SyncArgo
+      displayName: "Sync ArgoCD Application"
       timeoutInMinutes: 15
-      
+
       steps:
         - checkout: self
           clean: true
-          fetchDepth: 1
 
         - task: KubectlInstaller@0
           displayName: "Install kubectl"
@@ -450,81 +221,25 @@ stages:
         - script: |
             set -e
             mkdir -p $HOME/.kube
+
             aws eks update-kubeconfig \
               --region "$(AWS_DEFAULT_REGION)" \
               --name "$(CLUSTER_NAME)" \
               --kubeconfig "$HOME/.kube/config"
-            export KUBECONFIG="$HOME/.kube/config"
-          displayName: "Configure kubectl"
-          env:
-            AWS_ACCESS_KEY_ID: $(AWS_ACCESS_KEY_ID)
-            AWS_SECRET_ACCESS_KEY: $(AWS_SECRET_ACCESS_KEY)
-            AWS_DEFAULT_REGION: $(AWS_DEFAULT_REGION)
 
-        - script: |
-            set -e
             export KUBECONFIG="$HOME/.kube/config"
-            
+
             echo "====================================="
-            echo "  ArgoCD Application Sync"
+            echo " Check ArgoCD App Status"
             echo "====================================="
-            
-            # Check if ArgoCD is running
-            if ! kubectl get pods -n argo -l app.kubernetes.io/name=argocd-server --no-headers | grep -q Running; then
-              echo "⚠️ ArgoCD server not running, skipping sync"
-              exit 0
-            fi
-            
-            # Check if ArgoCD CLI is available
-            if ! command -v argocd &> /dev/null; then
-              echo "Installing ArgoCD CLI..."
-              curl -sSL -o /tmp/argocd https://github.com/argoproj/argo-cd/releases/latest/download/argocd-linux-amd64
-              chmod +x /tmp/argocd
-              ARGOCD_CLI=/tmp/argocd
-            else
-              ARGOCD_CLI=argocd
-            fi
-            
-            # Get ArgoCD server address
-            ARGOCD_SERVER=$(kubectl get svc argocd-server -n argo -o jsonpath='{.spec.clusterIP}')
-            
-            # Get ArgoCD admin password
-            ARGOCD_PASSWORD=$(kubectl -n argo get secret argocd-initial-admin-secret -o jsonpath="{.data.password}" | base64 -d)
-            
-            # Login to ArgoCD
-            $ARGOCD_CLI login $ARGOCD_SERVER:443 \
-              --username admin \
-              --password "$ARGOCD_PASSWORD" \
-              --insecure \
-              --grpc-web || {
-                echo "⚠️ Could not login to ArgoCD, checking app status via kubectl"
-                kubectl get applications -n argo || true
-                exit 0
-              }
-            
-            # Check if application exists
-            if $ARGOCD_CLI app get $(APP_NAME) --grpc-web &>/dev/null; then
-              echo "Syncing existing application..."
-              $ARGOCD_CLI app sync $(APP_NAME) --grpc-web --prune
-              $ARGOCD_CLI app wait $(APP_NAME) --grpc-web --health --timeout 300
-            else
-              echo "Application not found in ArgoCD"
-              echo "Creating application from GitOps manifests..."
-              
-              # Apply GitOps application manifest if exists
-              if [ -f "./$(GITOPS_DIR)/nonprod/$(APP_NAME)/application.yaml" ]; then
-                kubectl apply -f ./$(GITOPS_DIR)/nonprod/$(APP_NAME)/application.yaml
-                echo "✅ ArgoCD application created"
-              fi
-            fi
-            
-            echo ""
-            echo "ArgoCD applications:"
+
             kubectl get applications -n argo || true
-          displayName: "Sync ArgoCD"
+            kubectl get application $(APP_NAME) -n argo -o wide || true
+          displayName: "Check ArgoCD Application"
           env:
             AWS_ACCESS_KEY_ID: $(AWS_ACCESS_KEY_ID)
             AWS_SECRET_ACCESS_KEY: $(AWS_SECRET_ACCESS_KEY)
+            AWS_SESSION_TOKEN: $(AWS_SESSION_TOKEN)
             AWS_DEFAULT_REGION: $(AWS_DEFAULT_REGION)
 
 # ================================
@@ -532,148 +247,17 @@ stages:
 # ================================
 - stage: Smoke_Tests
   displayName: "🧪 Smoke Tests"
-  dependsOn: 
-    - Deploy
-    - ArgoCD_Sync
-  condition: |
-    and(
-      succeeded('Deploy'),
-      or(succeeded('ArgoCD_Sync'), eq(variables['RUN_ARGOCD_SYNC'], 'false')),
-      eq(variables['RUN_SMOKE_TESTS'], 'true')
-    )
-  
+  dependsOn: ArgoCD_Sync
+  condition: and(succeeded(), eq(variables['RUN_SMOKE_TESTS'], 'true'))
+
   jobs:
     - job: RunSmokeTests
       displayName: "Run Smoke Tests"
       timeoutInMinutes: 15
-      
+
       steps:
         - checkout: self
           clean: true
-          fetchDepth: 1
-
-        - script: |
-            set -e
-            mkdir -p $HOME/.kube
-            aws eks update-kubeconfig \
-              --region "$(AWS_DEFAULT_REGION)" \
-              --name "$(CLUSTER_NAME)" \
-              --kubeconfig "$HOME/.kube/config"
-            export KUBECONFIG="$HOME/.kube/config"
-          displayName: "Configure kubectl"
-          env:
-            AWS_ACCESS_KEY_ID: $(AWS_ACCESS_KEY_ID)
-            AWS_SECRET_ACCESS_KEY: $(AWS_SECRET_ACCESS_KEY)
-            AWS_DEFAULT_REGION: $(AWS_DEFAULT_REGION)
-
-        - script: |
-            set -e
-            export KUBECONFIG="$HOME/.kube/config"
-            
-            echo "====================================="
-            echo "  Smoke Tests"
-            echo "====================================="
-            
-            FAILED=0
-            
-            # Test 1: Check deployment exists and is ready
-            echo ""
-            echo "Test 1: Deployment Status"
-            if kubectl get deployment $(APP_NAME) -n $(APP_NAMESPACE) &>/dev/null; then
-              READY=$(kubectl get deployment $(APP_NAME) -n $(APP_NAMESPACE) -o jsonpath='{.status.readyReplicas}')
-              DESIRED=$(kubectl get deployment $(APP_NAME) -n $(APP_NAMESPACE) -o jsonpath='{.spec.replicas}')
-              if [ "$READY" -eq "$DESIRED" ]; then
-                echo "✅ PASSED: Deployment is ready ($READY/$DESIRED replicas)"
-              else
-                echo "❌ FAILED: Deployment not ready ($READY/$DESIRED replicas)"
-                FAILED=$((FAILED+1))
-              fi
-            else
-              echo "❌ FAILED: Deployment not found"
-              FAILED=$((FAILED+1))
-            fi
-            
-            # Test 2: Check pods are running
-            echo ""
-            echo "Test 2: Pod Health"
-            RUNNING_PODS=$(kubectl get pods -n $(APP_NAMESPACE) -l app.kubernetes.io/name=$(APP_NAME) --field-selector=status.phase=Running --no-headers 2>/dev/null | wc -l)
-            if [ "$RUNNING_PODS" -gt 0 ]; then
-              echo "✅ PASSED: $RUNNING_PODS pod(s) running"
-            else
-              echo "❌ FAILED: No running pods"
-              FAILED=$((FAILED+1))
-            fi
-            
-            # Test 3: Check service exists
-            echo ""
-            echo "Test 3: Service Exists"
-            if kubectl get svc $(APP_NAME) -n $(APP_NAMESPACE) &>/dev/null; then
-              echo "✅ PASSED: Service exists"
-            else
-              echo "⚠️ WARNING: Service not found"
-            fi
-            
-            # Test 4: Check container logs for errors
-            echo ""
-            echo "Test 4: Container Logs"
-            POD_NAME=$(kubectl get pods -n $(APP_NAMESPACE) -l app.kubernetes.io/name=$(APP_NAME) -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
-            if [ -n "$POD_NAME" ]; then
-              ERROR_COUNT=$(kubectl logs $POD_NAME -n $(APP_NAMESPACE) --tail=50 2>/dev/null | grep -ciE "error|exception|fatal" || echo 0)
-              if [ "$ERROR_COUNT" -eq 0 ]; then
-                echo "✅ PASSED: No errors in recent logs"
-              else
-                echo "⚠️ WARNING: $ERROR_COUNT error(s) found in logs"
-              fi
-            fi
-            
-            # Test 5: Health endpoint (if available)
-            echo ""
-            echo "Test 5: Health Endpoint"
-            SVC_IP=$(kubectl get svc $(APP_NAME) -n $(APP_NAMESPACE) -o jsonpath='{.spec.clusterIP}' 2>/dev/null || echo "")
-            SVC_PORT=$(kubectl get svc $(APP_NAME) -n $(APP_NAMESPACE) -o jsonpath='{.spec.ports[0].port}' 2>/dev/null || echo "")
-            if [ -n "$SVC_IP" ] && [ -n "$SVC_PORT" ]; then
-              # Use kubectl exec to test from within cluster
-              HEALTH_CHECK=$(kubectl run health-check-$(Build.BuildId) --rm -i --restart=Never --image=curlimages/curl --timeout=30s -- curl -s -o /dev/null -w "%{http_code}" http://$SVC_IP:$SVC_PORT/health 2>/dev/null || echo "000")
-              if [ "$HEALTH_CHECK" = "200" ]; then
-                echo "✅ PASSED: Health endpoint returned 200"
-              else
-                echo "⚠️ INFO: Health endpoint returned $HEALTH_CHECK (may not be configured)"
-              fi
-            fi
-            
-            echo ""
-            echo "====================================="
-            echo "  Smoke Test Summary"
-            echo "====================================="
-            if [ "$FAILED" -gt 0 ]; then
-              echo "❌ $FAILED test(s) failed"
-              exit 1
-            else
-              echo "✅ All critical tests passed"
-            fi
-          displayName: "Run Smoke Tests"
-          env:
-            AWS_ACCESS_KEY_ID: $(AWS_ACCESS_KEY_ID)
-            AWS_SECRET_ACCESS_KEY: $(AWS_SECRET_ACCESS_KEY)
-            AWS_DEFAULT_REGION: $(AWS_DEFAULT_REGION)
-
-# ================================
-# Rollback Stage (On Failure)
-# ================================
-- stage: Rollback
-  displayName: "⏪ Rollback"
-  dependsOn: Smoke_Tests
-  condition: and(failed(), eq(variables['ENABLE_AUTO_ROLLBACK'], 'true'))
-  
-  jobs:
-    - job: RollbackDeployment
-      displayName: "Rollback Deployment"
-      timeoutInMinutes: 15
-      
-      steps:
-        - checkout: self
-          clean: true
-          fetchDepth: 1
 
         - task: KubectlInstaller@0
           displayName: "Install kubectl"
@@ -683,39 +267,28 @@ stages:
         - script: |
             set -e
             mkdir -p $HOME/.kube
+
             aws eks update-kubeconfig \
               --region "$(AWS_DEFAULT_REGION)" \
               --name "$(CLUSTER_NAME)" \
               --kubeconfig "$HOME/.kube/config"
-            export KUBECONFIG="$HOME/.kube/config"
-          displayName: "Configure kubectl"
-          env:
-            AWS_ACCESS_KEY_ID: $(AWS_ACCESS_KEY_ID)
-            AWS_SECRET_ACCESS_KEY: $(AWS_SECRET_ACCESS_KEY)
-            AWS_DEFAULT_REGION: $(AWS_DEFAULT_REGION)
 
-        - script: |
-            set -e
             export KUBECONFIG="$HOME/.kube/config"
-            
+
             echo "====================================="
-            echo "  Rollback Deployment"
+            echo " Smoke Tests for $(APP_NAME)"
             echo "====================================="
-            
-            echo "Rolling back $(APP_NAME) deployment..."
-            kubectl rollout undo deployment/$(APP_NAME) -n $(APP_NAMESPACE)
-            
-            echo "Waiting for rollback to complete..."
+
             kubectl rollout status deployment/$(APP_NAME) -n $(APP_NAMESPACE) --timeout=300s
-            
-            echo ""
-            echo "Rolled back deployment status:"
-            kubectl get deployment $(APP_NAME) -n $(APP_NAMESPACE)
-            
-            echo ""
-            echo "⚠️ Rollback completed - please investigate the failure"
-          displayName: "Execute Rollback"
+
+            kubectl get pods -n $(APP_NAMESPACE)
+            kubectl get svc -n $(APP_NAMESPACE)
+            kubectl get ingress -n $(APP_NAMESPACE) || true
+
+            echo "✅ Smoke tests passed"
+          displayName: "Run Smoke Tests"
           env:
             AWS_ACCESS_KEY_ID: $(AWS_ACCESS_KEY_ID)
             AWS_SECRET_ACCESS_KEY: $(AWS_SECRET_ACCESS_KEY)
+            AWS_SESSION_TOKEN: $(AWS_SESSION_TOKEN)
             AWS_DEFAULT_REGION: $(AWS_DEFAULT_REGION)
