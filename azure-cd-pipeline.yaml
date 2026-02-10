@@ -157,8 +157,11 @@ stages:
 
             if ! command -v yq >/dev/null 2>&1; then
               echo "yq not found... installing..."
-              sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
-              sudo chmod +x /usr/local/bin/yq
+              mkdir -p $HOME/bin
+              wget -qO $HOME/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+              chmod +x $HOME/bin/yq
+              export PATH="$HOME/bin:$PATH"
+              echo "##vso[task.prependpath]$HOME/bin"
             fi
 
             echo "yq version:"
