@@ -3,7 +3,7 @@
 # ============================================================================
 # This pipeline updates GitOps manifests then ArgoCD syncs automatically
 # Author: DevOps Team
-# Version: 3.0.1
+# Version: 3.0.2
 # ============================================================================
 
 trigger:
@@ -227,11 +227,21 @@ stages:
             git config user.email "azure-devops@nti.com"
             git config user.name "Azure DevOps Pipeline"
 
+            echo "Fetching all branches..."
+            git fetch --all
+
+            echo "Switching to main branch..."
+            git checkout main || git checkout -b main
+
+            echo "Pull latest changes from main..."
+            git pull origin main
+
             git add gitops/nonprod/$(APP_NAME)/values-nonprod.yaml
 
             git commit -m "Update $(APP_NAME) image tag to $(LATEST_TAG)" || echo "No changes to commit"
 
-            git push origin main
+            echo "Pushing changes to GitHub..."
+            git push origin HEAD:main
           displayName: "Commit & Push GitOps"
 
 # ================================
