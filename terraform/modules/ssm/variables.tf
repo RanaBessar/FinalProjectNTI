@@ -44,8 +44,9 @@ variable "additional_secrets" {
     description = string
     value       = string
   }))
-  default   = {}
-  sensitive = true
+  default = {}
+  # Note: Cannot be sensitive because keys are used in for_each
+  # Values are protected by SecureString type in SSM
 }
 
 variable "tags" {
