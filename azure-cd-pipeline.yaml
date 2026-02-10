@@ -496,41 +496,41 @@ stages:
           env:
             AWS_DEFAULT_REGION: $(AWS_DEFAULT_REGION)
 
-          # --- Print and publish ArgoCD UI and App URLs ---
-          - script: |
-              set -e
-              echo "====================================="
-              echo "🔗 ArgoCD & Application URLs"
-              echo "====================================="
+        # --- Print and publish ArgoCD UI and App URLs ---
+        - script: |
+            set -e
+            echo "====================================="
+            echo "🔗 ArgoCD & Application URLs"
+            echo "====================================="
 
-              ARGOCD_HOST=$(kubectl get ingress -n argo -o jsonpath="{.items[0].spec.rules[0].host}" 2>/dev/null || true)
-              if [ -n "$ARGOCD_HOST" ]; then
-                ARGOCD_URL="https://$ARGOCD_HOST"
-                ARGOCD_APP_URL="https://$ARGOCD_HOST/applications/$(APP_NAME)"
-                echo "✅ ArgoCD UI: $ARGOCD_URL"
-                echo "✅ ArgoCD Application: $ARGOCD_APP_URL"
-              else
-                ARGOCD_URL="https://localhost:9090"
-                ARGOCD_APP_URL="https://localhost:9090/applications/$(APP_NAME)"
-                echo "⚠️ No ArgoCD ingress found. Use port-forward:"
-                echo "kubectl port-forward svc/argocd-server -n argo 9090:443"
-                echo "Then open: $ARGOCD_URL"
-                echo "Application URL: $ARGOCD_APP_URL"
-              fi
+            ARGOCD_HOST=$(kubectl get ingress -n argo -o jsonpath="{.items[0].spec.rules[0].host}" 2>/dev/null || true)
+            if [ -n "$ARGOCD_HOST" ]; then
+              ARGOCD_URL="https://$ARGOCD_HOST"
+              ARGOCD_APP_URL="https://$ARGOCD_HOST/applications/$(APP_NAME)"
+              echo "✅ ArgoCD UI: $ARGOCD_URL"
+              echo "✅ ArgoCD Application: $ARGOCD_APP_URL"
+            else
+              ARGOCD_URL="https://localhost:9090"
+              ARGOCD_APP_URL="https://localhost:9090/applications/$(APP_NAME)"
+              echo "⚠️ No ArgoCD ingress found. Use port-forward:"
+              echo "kubectl port-forward svc/argocd-server -n argo 9090:443"
+              echo "Then open: $ARGOCD_URL"
+              echo "Application URL: $ARGOCD_APP_URL"
+            fi
 
-              APP_HOST=$(kubectl get ingress -n $(APP_NAMESPACE) -o jsonpath="{.items[0].spec.rules[0].host}" 2>/dev/null || true)
-              if [ -n "$APP_HOST" ]; then
-                APP_URL="http://$APP_HOST"
-                echo "✅ Application URL: $APP_URL"
-              else
-                APP_URL=""
-                echo "⚠️ No ingress found for application in namespace $(APP_NAMESPACE)"
-              fi
+            APP_HOST=$(kubectl get ingress -n $(APP_NAMESPACE) -o jsonpath="{.items[0].spec.rules[0].host}" 2>/dev/null || true)
+            if [ -n "$APP_HOST" ]; then
+              APP_URL="http://$APP_HOST"
+              echo "✅ Application URL: $APP_URL"
+            else
+              APP_URL=""
+              echo "⚠️ No ingress found for application in namespace $(APP_NAMESPACE)"
+            fi
 
-              # Publish as pipeline variables for summary
-              echo "##vso[task.setvariable variable=ARGOCD_URL;isOutput=true]$ARGOCD_URL"
-              echo "##vso[task.setvariable variable=ARGOCD_APP_URL;isOutput=true]$ARGOCD_APP_URL"
-              echo "##vso[task.setvariable variable=APP_URL;isOutput=true]$APP_URL"
-            displayName: "Publish ArgoCD & App URLs"
-            env:
-              AWS_DEFAULT_REGION: $(AWS_DEFAULT_REGION)
+            # Publish as pipeline variables for summary
+            echo "##vso[task.setvariable variable=ARGOCD_URL;isOutput=true]$ARGOCD_URL"
+            echo "##vso[task.setvariable variable=ARGOCD_APP_URL;isOutput=true]$ARGOCD_APP_URL"
+            echo "##vso[task.setvariable variable=APP_URL;isOutput=true]$APP_URL"
+          displayName: "Publish ArgoCD & App URLs"
+          env:
+            AWS_DEFAULT_REGION: $(AWS_DEFAULT_REGION)
