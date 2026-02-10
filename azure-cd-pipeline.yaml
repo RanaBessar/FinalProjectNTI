@@ -36,6 +36,8 @@ variables:
 
   APP_NAME: "nti-app"
   APP_NAMESPACE: "nti-app"
+  ENVIRONMENT: "nonprod"
+  DEPLOYMENT_NAME: "nti-app-nonprod"
   HELM_WORKING_DIR: "helm"
   GITOPS_DIR: "gitops"
 
@@ -344,9 +346,9 @@ stages:
               sleep 10
             done
 
-            if kubectl get deployment/$(APP_NAME) -n $(APP_NAMESPACE) >/dev/null 2>&1; then
+            if kubectl get deployment/$(DEPLOYMENT_NAME) -n $(APP_NAMESPACE) >/dev/null 2>&1; then
               echo "Waiting for deployment rollout..."
-              kubectl rollout status deployment/$(APP_NAME) -n $(APP_NAMESPACE) --timeout=300s || true
+              kubectl rollout status deployment/$(DEPLOYMENT_NAME) -n $(APP_NAMESPACE) --timeout=300s || true
             fi
           displayName: "Check ArgoCD Application"
           env:
@@ -442,14 +444,14 @@ stages:
             echo "Waiting for deployment..."
             RETRIES=12
             for i in $(seq 1 $RETRIES); do
-              if kubectl get deployment/$(APP_NAME) -n $(APP_NAMESPACE) >/dev/null 2>&1; then
+              if kubectl get deployment/$(DEPLOYMENT_NAME) -n $(APP_NAMESPACE) >/dev/null 2>&1; then
                 break
               fi
               echo "Deployment not ready yet... ($i/$RETRIES)"
               sleep 10
             done
 
-            kubectl rollout status deployment/$(APP_NAME) -n $(APP_NAMESPACE) --timeout=300s
+            kubectl rollout status deployment/$(DEPLOYMENT_NAME) -n $(APP_NAMESPACE) --timeout=300s
 
             kubectl get pods -n $(APP_NAMESPACE)
             kubectl get svc -n $(APP_NAMESPACE)
