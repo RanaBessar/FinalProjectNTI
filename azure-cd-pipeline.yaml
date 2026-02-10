@@ -394,7 +394,7 @@ stages:
             kubectl get svc -n $(APP_NAMESPACE)
             kubectl get ingress -n $(APP_NAMESPACE) || true
 
-            echo "✅ Smoke tests passed"
+            echo " Smoke tests passed"
           displayName: "Run Smoke Tests"
           env:
             AWS_DEFAULT_REGION: $(AWS_DEFAULT_REGION)
