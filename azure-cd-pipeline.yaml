@@ -3,7 +3,7 @@
 # ============================================================================
 # This pipeline updates GitOps manifests then ArgoCD syncs automatically
 # Author: DevOps Team
-# Version: 3.0.2
+# Version: 3.0.3
 # ============================================================================
 
 trigger:
@@ -353,6 +353,40 @@ stages:
           displayName: "Check ArgoCD Application"
           env:
             AWS_DEFAULT_REGION: $(AWS_DEFAULT_REGION)
+
+        - script: |
+            set -e
+            echo "====================================="
+            echo " Print ArgoCD UI & Application Links"
+            echo "====================================="
+
+            echo ""
+            echo "🔹 ArgoCD UI Link (if ingress exists):"
+
+            ARGOCD_HOST=$(kubectl get ingress -n argo -o jsonpath="{.items[0].spec.rules[0].host}" 2>/dev/null || true)
+
+            if [ -n "$ARGOCD_HOST" ]; then
+              echo "✅ ArgoCD UI: https://$ARGOCD_HOST"
+              echo "✅ ArgoCD Application: https://$ARGOCD_HOST/applications/$(APP_NAME)"
+            else
+              echo "⚠️ No ArgoCD ingress found."
+              echo "➡️ Use port-forward to access UI:"
+              echo "kubectl port-forward svc/argocd-server -n argo 9090:443"
+              echo "Then open: https://localhost:9090"
+              echo "Application URL: https://localhost:9090/applications/$(APP_NAME)"
+            fi
+
+            echo ""
+            echo "🔹 Application Public URL (if ingress exists):"
+
+            APP_HOST=$(kubectl get ingress -n $(APP_NAMESPACE) -o jsonpath="{.items[0].spec.rules[0].host}" 2>/dev/null || true)
+
+            if [ -n "$APP_HOST" ]; then
+              echo "✅ Application URL: http://$APP_HOST"
+            else
+              echo "⚠️ No ingress found for application in namespace $(APP_NAMESPACE)"
+            fi
+          displayName: "Print ArgoCD & App URLs"
 
 # ================================
 # Smoke Test Stage
