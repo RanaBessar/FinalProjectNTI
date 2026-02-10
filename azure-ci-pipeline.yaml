@@ -426,11 +426,22 @@ stages:
             echo "  Verify Pushed Images"
             echo "====================================="
 
+            # List recent images in the repository
             aws ecr describe-images \
               --repository-name $(IMAGE_NAME) \
               --region $(AWS_DEFAULT_REGION) \
-              --query 'imageDetails[?contains(imageTags, `$(IMAGE_TAG)`)].{Tags:imageTags,Pushed:imagePushedAt,Size:imageSizeInBytes}' \
+              --query 'imageDetails[?imageTags!=`null`] | sort_by(@, &imagePushedAt) | [-5:].{Tags:imageTags,Pushed:imagePushedAt,Size:imageSizeInBytes}' \
               --output table
+
+            # Verify our specific tag exists
+            if aws ecr describe-images \
+              --repository-name $(IMAGE_NAME) \
+              --region $(AWS_DEFAULT_REGION) \
+              --image-ids imageTag=$(IMAGE_TAG) &>/dev/null; then
+              echo "✅ Image with tag $(IMAGE_TAG) verified in ECR"
+            else
+              echo "⚠️ Could not verify image tag $(IMAGE_TAG)"
+            fi
           displayName: "Verify Pushed Images"
           env:
             AWS_ACCESS_KEY_ID: $(AWS_ACCESS_KEY_ID)
