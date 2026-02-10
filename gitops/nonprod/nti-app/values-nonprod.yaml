@@ -3,41 +3,34 @@
 # Declare variables to be passed into your templates.
 
 replicaCount: 1
-
 image:
-  repository: nginx
+  repository: 842303506852.dkr.ecr.us-east-1.amazonaws.com/nti-app
   pullPolicy: IfNotPresent
-  tag: ""
-
+  tag: "latest"
 imagePullSecrets: []
-
 nameOverride: ""
 fullnameOverride: ""
-
 serviceAccount:
   create: true
   automount: true
   annotations: {}
   name: ""
-
 podAnnotations: {}
 podLabels: {}
-
 podSecurityContext: {}
-  # fsGroup: 2000
+# fsGroup: 2000
 
 securityContext: {}
-  # capabilities:
-  #   drop:
-  #   - ALL
-  # readOnlyRootFilesystem: true
-  # runAsNonRoot: true
-  # runAsUser: 1000
+# capabilities:
+#   drop:
+#   - ALL
+# readOnlyRootFilesystem: true
+# runAsNonRoot: true
+# runAsUser: 1000
 
 service:
   type: ClusterIP
   port: 80
-
 ingress:
   enabled: true
   className: "nginx"
@@ -47,7 +40,6 @@ ingress:
         - path: /
           pathType: Prefix
   tls: []
-
 httpRoute:
   enabled: false
   annotations: {}
@@ -61,37 +53,29 @@ httpRoute:
         - path:
             type: PathPrefix
             value: /headers
-
 resources: {}
-  # limits:
-  #   cpu: 100m
-  #   memory: 128Mi
-  # requests:
-  #   cpu: 100m
-  #   memory: 128Mi
+# limits:
+#   cpu: 100m
+#   memory: 128Mi
+# requests:
+#   cpu: 100m
+#   memory: 128Mi
 
 livenessProbe:
   httpGet:
     path: /
     port: http
-
 readinessProbe:
   httpGet:
     path: /
     port: http
-
 autoscaling:
   enabled: false
   minReplicas: 1
   maxReplicas: 100
   targetCPUUtilizationPercentage: 80
-
 volumes: []
-
 volumeMounts: []
-
 nodeSelector: {}
-
 tolerations: []
-
 affinity: {}
