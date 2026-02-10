@@ -316,6 +316,18 @@ stages:
             export KUBECONFIG="$HOME/.kube/config"
 
             echo "====================================="
+            echo " Ensure ArgoCD Application Exists"
+            echo "====================================="
+
+            APP_MANIFEST="$(GITOPS_DIR)/nonprod/$(APP_NAME)/application.yaml"
+            if [ -f "$APP_MANIFEST" ]; then
+              echo "Applying ArgoCD Application manifest..."
+              kubectl apply -f "$APP_MANIFEST"
+            else
+              echo "⚠️  Application manifest not found: $APP_MANIFEST"
+            fi
+
+            echo "====================================="
             echo " Check ArgoCD App Status"
             echo "====================================="
 
