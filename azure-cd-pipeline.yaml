@@ -123,8 +123,8 @@ stages:
             echo "  YAML Syntax Validation"
             echo "====================================="
             
-            # Validate GitOps YAML files
-            find ./$(GITOPS_DIR) -name '*.yaml' -o -name '*.yml' | while read file; do
+            # Validate GitOps YAML files (exclude Helm templates which contain Go template syntax)
+            find ./$(GITOPS_DIR) \( -name '*.yaml' -o -name '*.yml' \) -not -path '*/templates/*' | while read file; do
               echo "Validating: $file"
               # Basic YAML syntax check using Python
               python3 -c "import yaml; yaml.safe_load(open('$file'))" 2>/dev/null || {
@@ -133,7 +133,7 @@ stages:
               }
             done
             
-            echo "✅ All YAML files are valid"
+            echo "✅ All YAML files are valid (Helm templates validated separately)"
           displayName: "Validate YAML Syntax"
 
         - script: |
