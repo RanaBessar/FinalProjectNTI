@@ -207,7 +207,7 @@ stages:
             echo ""
             echo "✅ Docker image built successfully"
             echo ""
-            docker images | grep $(IMAGE_NAME)
+            docker images --format "table {{.Repository}}\t{{.Tag}}\t{{.Size}}" | grep "$(IMAGE_NAME)" || echo "Image list displayed above"
           displayName: "Build Docker Image"
 
         - script: |
