@@ -3,7 +3,7 @@
 # ============================================================================
 # This pipeline updates GitOps manifests then ArgoCD syncs automatically
 # Author: DevOps Team
-# Version: 3.0.0
+# Version: 3.0.1
 # ============================================================================
 
 trigger:
@@ -123,14 +123,47 @@ stages:
             echo " Validate AWS Credentials"
             echo "====================================="
 
+            mkdir -p ~/.aws
+
+            cat > ~/.aws/credentials <<EOF
+            [default]
+            aws_access_key_id=$(AWS_ACCESS_KEY_ID)
+            aws_secret_access_key=$(AWS_SECRET_ACCESS_KEY)
+            EOF
+
+            cat > ~/.aws/config <<EOF
+            [default]
+            region=$(AWS_DEFAULT_REGION)
+            output=json
+            EOF
+
+            echo "AWS CLI Version:"
+            aws --version
+
             aws sts get-caller-identity
+
             echo "✅ AWS credentials valid"
           displayName: "Validate AWS Credentials"
           env:
             AWS_ACCESS_KEY_ID: $(AWS_ACCESS_KEY_ID)
             AWS_SECRET_ACCESS_KEY: $(AWS_SECRET_ACCESS_KEY)
-            AWS_SESSION_TOKEN: $(AWS_SESSION_TOKEN)
             AWS_DEFAULT_REGION: $(AWS_DEFAULT_REGION)
+
+        - script: |
+            set -e
+            echo "====================================="
+            echo " Install yq"
+            echo "====================================="
+
+            if ! command -v yq >/dev/null 2>&1; then
+              echo "yq not found... installing..."
+              sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+              sudo chmod +x /usr/local/bin/yq
+            fi
+
+            echo "yq version:"
+            yq --version
+          displayName: "Install yq"
 
         - script: |
             set -e
@@ -147,14 +180,16 @@ stages:
               --query 'sort_by(imageDetails,& imagePushedAt)[-1].imageTags[0]' \
               --output text)
 
+            if [ -z "$LATEST_TAG" ] || [ "$LATEST_TAG" = "None" ]; then
+              echo "❌ Could not fetch latest image tag from ECR"
+              exit 1
+            fi
+
             echo "Latest image tag: $LATEST_TAG"
             echo "##vso[task.setvariable variable=LATEST_TAG]$LATEST_TAG"
             echo "##vso[task.setvariable variable=ECR_REGISTRY]$ECR_REGISTRY"
           displayName: "Get Latest Tag from ECR"
           env:
-            AWS_ACCESS_KEY_ID: $(AWS_ACCESS_KEY_ID)
-            AWS_SECRET_ACCESS_KEY: $(AWS_SECRET_ACCESS_KEY)
-            AWS_SESSION_TOKEN: $(AWS_SESSION_TOKEN)
             AWS_DEFAULT_REGION: $(AWS_DEFAULT_REGION)
 
         - script: |
@@ -220,6 +255,38 @@ stages:
 
         - script: |
             set -e
+            echo "====================================="
+            echo " Configure AWS Credentials"
+            echo "====================================="
+
+            mkdir -p ~/.aws
+
+            cat > ~/.aws/credentials <<EOF
+            [default]
+            aws_access_key_id=$(AWS_ACCESS_KEY_ID)
+            aws_secret_access_key=$(AWS_SECRET_ACCESS_KEY)
+            EOF
+
+            cat > ~/.aws/config <<EOF
+            [default]
+            region=$(AWS_DEFAULT_REGION)
+            output=json
+            EOF
+
+            aws sts get-caller-identity
+            echo "✅ AWS credentials valid"
+          displayName: "Configure AWS Credentials"
+          env:
+            AWS_ACCESS_KEY_ID: $(AWS_ACCESS_KEY_ID)
+            AWS_SECRET_ACCESS_KEY: $(AWS_SECRET_ACCESS_KEY)
+            AWS_DEFAULT_REGION: $(AWS_DEFAULT_REGION)
+
+        - script: |
+            set -e
+            echo "====================================="
+            echo " Configure kubeconfig"
+            echo "====================================="
+
             mkdir -p $HOME/.kube
 
             aws eks update-kubeconfig \
@@ -237,9 +304,6 @@ stages:
             kubectl get application $(APP_NAME) -n argo -o wide || true
           displayName: "Check ArgoCD Application"
           env:
-            AWS_ACCESS_KEY_ID: $(AWS_ACCESS_KEY_ID)
-            AWS_SECRET_ACCESS_KEY: $(AWS_SECRET_ACCESS_KEY)
-            AWS_SESSION_TOKEN: $(AWS_SESSION_TOKEN)
             AWS_DEFAULT_REGION: $(AWS_DEFAULT_REGION)
 
 # ================================
@@ -266,6 +330,38 @@ stages:
 
         - script: |
             set -e
+            echo "====================================="
+            echo " Configure AWS Credentials"
+            echo "====================================="
+
+            mkdir -p ~/.aws
+
+            cat > ~/.aws/credentials <<EOF
+            [default]
+            aws_access_key_id=$(AWS_ACCESS_KEY_ID)
+            aws_secret_access_key=$(AWS_SECRET_ACCESS_KEY)
+            EOF
+
+            cat > ~/.aws/config <<EOF
+            [default]
+            region=$(AWS_DEFAULT_REGION)
+            output=json
+            EOF
+
+            aws sts get-caller-identity
+            echo "✅ AWS credentials valid"
+          displayName: "Configure AWS Credentials"
+          env:
+            AWS_ACCESS_KEY_ID: $(AWS_ACCESS_KEY_ID)
+            AWS_SECRET_ACCESS_KEY: $(AWS_SECRET_ACCESS_KEY)
+            AWS_DEFAULT_REGION: $(AWS_DEFAULT_REGION)
+
+        - script: |
+            set -e
+            echo "====================================="
+            echo " Configure kubeconfig"
+            echo "====================================="
+
             mkdir -p $HOME/.kube
 
             aws eks update-kubeconfig \
@@ -288,7 +384,4 @@ stages:
             echo "✅ Smoke tests passed"
           displayName: "Run Smoke Tests"
           env:
-            AWS_ACCESS_KEY_ID: $(AWS_ACCESS_KEY_ID)
-            AWS_SECRET_ACCESS_KEY: $(AWS_SECRET_ACCESS_KEY)
-            AWS_SESSION_TOKEN: $(AWS_SESSION_TOKEN)
             AWS_DEFAULT_REGION: $(AWS_DEFAULT_REGION)
