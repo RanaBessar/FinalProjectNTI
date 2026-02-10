@@ -286,11 +286,14 @@ stages:
             echo "  Terraform Plan"
             echo "====================================="
             
-            # Generate plan
+            # Generate plan - capture exit code properly
+            set +e
             terraform plan \
               -var-file=$(TF_VAR_FILE) \
               -out=tfplan \
-              -detailed-exitcode || PLAN_EXIT=$?
+              -detailed-exitcode
+            PLAN_EXIT=$?
+            set -e
             
             # Interpret exit code
             case $PLAN_EXIT in
@@ -313,7 +316,7 @@ stages:
             echo "====================================="
             echo "  Plan Summary"
             echo "====================================="
-            terraform show -no-color tfplan | grep -E "^Plan:|^  #|will be"
+            terraform show -no-color tfplan | grep -E "^Plan:|^  #|will be" || echo "No infrastructure changes to display"
           displayName: "Terraform Plan"
           name: tfplan
           env:
