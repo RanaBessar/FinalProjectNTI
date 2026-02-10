@@ -320,7 +320,22 @@ stages:
             echo "====================================="
 
             kubectl get applications -n argo || true
-            kubectl get application $(APP_NAME) -n argo -o wide || true
+
+            echo "Waiting for ArgoCD to sync and create resources..."
+            RETRIES=30
+            for i in $(seq 1 $RETRIES); do
+              if kubectl get namespace $(APP_NAMESPACE) >/dev/null 2>&1; then
+                echo "✅ Namespace $(APP_NAMESPACE) exists"
+                break
+              fi
+              echo "Waiting for namespace... ($i/$RETRIES)"
+              sleep 10
+            done
+
+            if kubectl get deployment/$(APP_NAME) -n $(APP_NAMESPACE) >/dev/null 2>&1; then
+              echo "Waiting for deployment rollout..."
+              kubectl rollout status deployment/$(APP_NAME) -n $(APP_NAMESPACE) --timeout=300s || true
+            fi
           displayName: "Check ArgoCD Application"
           env:
             AWS_DEFAULT_REGION: $(AWS_DEFAULT_REGION)
@@ -393,6 +408,34 @@ stages:
             echo "====================================="
             echo " Smoke Tests for $(APP_NAME)"
             echo "====================================="
+
+            echo "Checking namespace exists..."
+            if ! kubectl get namespace $(APP_NAMESPACE) >/dev/null 2>&1; then
+              echo "⚠️  Namespace $(APP_NAMESPACE) not found - ArgoCD may not have synced yet"
+              echo "Waiting for namespace creation..."
+              RETRIES=18
+              for i in $(seq 1 $RETRIES); do
+                if kubectl get namespace $(APP_NAMESPACE) >/dev/null 2>&1; then
+                  echo "✅ Namespace created"
+                  break
+                fi
+                if [ $i -eq $RETRIES ]; then
+                  echo "❌ Namespace still not found after waiting"
+                  exit 1
+                fi
+                sleep 10
+              done
+            fi
+
+            echo "Waiting for deployment..."
+            RETRIES=12
+            for i in $(seq 1 $RETRIES); do
+              if kubectl get deployment/$(APP_NAME) -n $(APP_NAMESPACE) >/dev/null 2>&1; then
+                break
+              fi
+              echo "Deployment not ready yet... ($i/$RETRIES)"
+              sleep 10
+            done
 
             kubectl rollout status deployment/$(APP_NAME) -n $(APP_NAMESPACE) --timeout=300s
 
