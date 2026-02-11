@@ -14,8 +14,8 @@ variables:
 
   AWS_DEFAULT_REGION: "us-east-1"
 
-  TF_STATE_BUCKET: "nti-finalproject-terraform-state"
-  TF_LOCK_TABLE: "nti-finalproject-terraform-lock"
+  TF_STATE_BUCKET: "nti-finalproject-terraform-state-rana2"
+  TF_LOCK_TABLE: "nti-finalproject-terraform-lock-rana2"
 
   DEPLOY_HELM: "true"
   RUN_DESTROY: "false"
