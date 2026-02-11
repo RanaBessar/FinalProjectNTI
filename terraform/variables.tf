@@ -30,7 +30,7 @@ variable "private_subnet_cidrs" {
 
 variable "cluster_version" {
   type    = string
-  default = "1.30cd"
+  default = "1.30"
 }
 
 variable "node_instance_types" {
