@@ -371,6 +371,28 @@ stages:
             AWS_SECRET_ACCESS_KEY: $(AWS_SECRET_ACCESS_KEY)
             AWS_DEFAULT_REGION: $(AWS_DEFAULT_REGION)
 
+        # ============================================================
+        # FIX ADDED HERE: Auto Create Repository If Not Exists
+        # ============================================================
+        - script: |
+            set -e
+            echo "====================================="
+            echo "  Ensure ECR Repository Exists"
+            echo "====================================="
+
+            if aws ecr describe-repositories --repository-names $(IMAGE_NAME) --region $(AWS_DEFAULT_REGION) >/dev/null 2>&1; then
+              echo "✅ Repository $(IMAGE_NAME) already exists"
+            else
+              echo "⚠️ Repository $(IMAGE_NAME) not found. Creating it now..."
+              aws ecr create-repository --repository-name $(IMAGE_NAME) --region $(AWS_DEFAULT_REGION)
+              echo "✅ Repository $(IMAGE_NAME) created successfully"
+            fi
+          displayName: "Ensure ECR Repository Exists"
+          env:
+            AWS_ACCESS_KEY_ID: $(AWS_ACCESS_KEY_ID)
+            AWS_SECRET_ACCESS_KEY: $(AWS_SECRET_ACCESS_KEY)
+            AWS_DEFAULT_REGION: $(AWS_DEFAULT_REGION)
+
         - script: |
             set -e
 
@@ -426,14 +448,12 @@ stages:
             echo "  Verify Pushed Images"
             echo "====================================="
 
-            # List recent images in the repository
             aws ecr describe-images \
               --repository-name $(IMAGE_NAME) \
               --region $(AWS_DEFAULT_REGION) \
               --query 'imageDetails[?imageTags!=`null`] | sort_by(@, &imagePushedAt) | [-5:].{Tags:imageTags,Pushed:imagePushedAt,Size:imageSizeInBytes}' \
               --output table
 
-            # Verify our specific tag exists
             if aws ecr describe-images \
               --repository-name $(IMAGE_NAME) \
               --region $(AWS_DEFAULT_REGION) \
