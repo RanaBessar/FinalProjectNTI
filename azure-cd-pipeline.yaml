@@ -3,7 +3,7 @@
 # ============================================================================
 # This pipeline updates GitOps manifests then ArgoCD syncs automatically
 # Author: DevOps Team
-# Version: 3.0.3
+# Version: 3.0.4
 # ============================================================================
 
 trigger:
@@ -100,6 +100,7 @@ stages:
 
             echo "✅ Helm template renders successfully"
           displayName: "Helm Template Dry Run"
+
 
 # ================================
 # GitOps Update Stage
@@ -252,6 +253,7 @@ stages:
             git push origin HEAD:main
           displayName: "Commit & Push GitOps"
 
+
 # ================================
 # ArgoCD Sync Stage
 # ================================
@@ -269,10 +271,22 @@ stages:
         - checkout: self
           clean: true
 
-        - task: KubectlInstaller@0
-          displayName: "Install kubectl"
-          inputs:
-            kubectlVersion: "latest"
+        # بدل KubectlInstaller بسبب timeout
+        - script: |
+            set -e
+            echo "====================================="
+            echo " Install kubectl manually (EKS 1.35)"
+            echo "====================================="
+
+            KUBECTL_VERSION="v1.35.0"
+
+            curl -LO "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl"
+            chmod +x kubectl
+            sudo mv kubectl /usr/local/bin/
+
+            echo "kubectl installed successfully:"
+            kubectl version --client
+          displayName: "Install kubectl (Manual)"
 
         - script: |
             set -e
@@ -388,6 +402,7 @@ stages:
             fi
           displayName: "Print ArgoCD & App URLs"
 
+
 # ================================
 # Smoke Test Stage
 # ================================
@@ -405,10 +420,22 @@ stages:
         - checkout: self
           clean: true
 
-        - task: KubectlInstaller@0
-          displayName: "Install kubectl"
-          inputs:
-            kubectlVersion: "latest"
+        # بدل KubectlInstaller بسبب timeout
+        - script: |
+            set -e
+            echo "====================================="
+            echo " Install kubectl manually (EKS 1.35)"
+            echo "====================================="
+
+            KUBECTL_VERSION="v1.35.0"
+
+            curl -LO "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl"
+            chmod +x kubectl
+            sudo mv kubectl /usr/local/bin/
+
+            echo "kubectl installed successfully:"
+            kubectl version --client
+          displayName: "Install kubectl (Manual)"
 
         - script: |
             set -e
@@ -491,7 +518,7 @@ stages:
             kubectl get svc -n $(APP_NAMESPACE)
             kubectl get ingress -n $(APP_NAMESPACE) || true
 
-            echo " Smoke tests passed"
+            echo "✅ Smoke tests passed"
           displayName: "Run Smoke Tests"
           env:
             AWS_DEFAULT_REGION: $(AWS_DEFAULT_REGION)
@@ -527,7 +554,6 @@ stages:
               echo "⚠️ No ingress found for application in namespace $(APP_NAMESPACE)"
             fi
 
-            # Publish as pipeline variables for summary
             echo "##vso[task.setvariable variable=ARGOCD_URL;isOutput=true]$ARGOCD_URL"
             echo "##vso[task.setvariable variable=ARGOCD_APP_URL;isOutput=true]$ARGOCD_APP_URL"
             echo "##vso[task.setvariable variable=APP_URL;isOutput=true]$APP_URL"
