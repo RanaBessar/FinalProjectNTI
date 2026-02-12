@@ -41,7 +41,7 @@ variables:
   
   # State Backend
   TF_STATE_BUCKET: "nti-final-tfstate-842303506852-us-east-1-2026"
-  TF_LOCK_TABLE: "nti-final-tflock-842303506852-us-east-1-2026"
+  TF_LOCK_TABLE: "nti-finalproject-terraform-lock"
   
   # Environment
   ENVIRONMENT: "nonprod"
