@@ -4,9 +4,9 @@ trigger:
       - main
 
 pool:
-  name: SelfHostedPool
+  name: self-hosted-pool
   demands:
-    - agent.os -equals Linux
+     - Agent.OS -equals Linux
 
 variables:
   TF_WORKING_DIR: "terraform"
