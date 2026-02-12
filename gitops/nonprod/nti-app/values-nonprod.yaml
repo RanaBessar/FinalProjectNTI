@@ -4,7 +4,7 @@
 
 replicaCount: 1
 image:
-  repository: 842303506852.dkr.ecr.us-east-1.amazonaws.com/nti-app
+  repository: 251251171133.dkr.ecr.us-east-1.amazonaws.com/nti-app
   pullPolicy: IfNotPresent
   tag: "latest"
 imagePullSecrets: []
