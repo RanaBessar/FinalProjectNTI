@@ -26,9 +26,9 @@ pr:
       - helm/nti-app/**
 
 pool:
-  name: SelfHostedPool
+  name: self-hosted-pool
   demands:
-    - agent.os -equals Linux
+     - Agent.OS -equals Linux
 
 variables:
   AWS_DEFAULT_REGION: "us-east-1"

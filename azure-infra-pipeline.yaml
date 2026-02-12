@@ -24,9 +24,9 @@ pr:
       - terraform/**
 
 pool:
-  name: SelfHostedPool
+  name: self-hosted-pool
   demands:
-    - agent.os -equals Linux
+     - Agent.OS -equals Linux
 
 # ================================
 # Pipeline Variables
