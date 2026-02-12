@@ -101,7 +101,6 @@ stages:
             echo "✅ Helm template renders successfully"
           displayName: "Helm Template Dry Run"
 
-
 # ================================
 # GitOps Update Stage
 # ================================
@@ -233,17 +232,11 @@ stages:
             echo "Fetching all branches..."
             git fetch --all
 
-            echo "Stashing local changes..."
-            git stash --include-untracked || true
-
             echo "Switching to main branch..."
             git checkout main 2>/dev/null || git checkout -B main origin/main
 
             echo "Pull latest changes from main..."
             git pull origin main --rebase || true
-
-            echo "Restoring stashed changes..."
-            git stash pop || true
 
             git add gitops/nonprod/$(APP_NAME)/values-nonprod.yaml
 
@@ -252,7 +245,6 @@ stages:
             echo "Pushing changes to GitHub..."
             git push origin HEAD:main
           displayName: "Commit & Push GitOps"
-
 
 # ================================
 # ArgoCD Sync Stage
@@ -271,22 +263,24 @@ stages:
         - checkout: self
           clean: true
 
-        # بدل KubectlInstaller بسبب timeout
+        # FIXED: Install kubectl manually (NO SUDO)
         - script: |
             set -e
             echo "====================================="
-            echo " Install kubectl manually (EKS 1.35)"
+            echo " Install kubectl manually (EKS 1.35 - No sudo)"
             echo "====================================="
 
-            KUBECTL_VERSION="v1.35.0"
+            mkdir -p $HOME/bin
 
-            curl -LO "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl"
+            curl -LO "https://dl.k8s.io/release/v1.35.0/bin/linux/amd64/kubectl"
+
             chmod +x kubectl
-            sudo mv kubectl /usr/local/bin/
+            mv kubectl $HOME/bin/kubectl
 
-            echo "kubectl installed successfully:"
+            echo "##vso[task.prependpath]$HOME/bin"
+
             kubectl version --client
-          displayName: "Install kubectl (Manual)"
+          displayName: "Install kubectl (Manual - No sudo)"
 
         - script: |
             set -e
@@ -402,7 +396,6 @@ stages:
             fi
           displayName: "Print ArgoCD & App URLs"
 
-
 # ================================
 # Smoke Test Stage
 # ================================
@@ -420,22 +413,24 @@ stages:
         - checkout: self
           clean: true
 
-        # بدل KubectlInstaller بسبب timeout
+        # FIXED: Install kubectl manually (NO SUDO)
         - script: |
             set -e
             echo "====================================="
-            echo " Install kubectl manually (EKS 1.35)"
+            echo " Install kubectl manually (EKS 1.35 - No sudo)"
             echo "====================================="
 
-            KUBECTL_VERSION="v1.35.0"
+            mkdir -p $HOME/bin
 
-            curl -LO "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl"
+            curl -LO "https://dl.k8s.io/release/v1.35.0/bin/linux/amd64/kubectl"
+
             chmod +x kubectl
-            sudo mv kubectl /usr/local/bin/
+            mv kubectl $HOME/bin/kubectl
 
-            echo "kubectl installed successfully:"
+            echo "##vso[task.prependpath]$HOME/bin"
+
             kubectl version --client
-          displayName: "Install kubectl (Manual)"
+          displayName: "Install kubectl (Manual - No sudo)"
 
         - script: |
             set -e
@@ -523,7 +518,6 @@ stages:
           env:
             AWS_DEFAULT_REGION: $(AWS_DEFAULT_REGION)
 
-        # --- Print and publish ArgoCD UI and App URLs ---
         - script: |
             set -e
             echo "====================================="
