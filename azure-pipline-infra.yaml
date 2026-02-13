@@ -12,7 +12,7 @@ variables:
   TF_WORKING_DIR: "terraform"
   HELM_WORKING_DIR: "helm"
 
-  AWS_DEFAULT_REGION: "us-east-1"
+  AWS_DEFAULT_REGION: "eu-west-1"
 
   TF_STATE_BUCKET: "nti-final-tfstate-842303506852-us-east-1-2026"
   TF_LOCK_TABLE: "nti-finalproject-terraform-lock"
