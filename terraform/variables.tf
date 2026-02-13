@@ -35,7 +35,7 @@ variable "cluster_version" {
 
 variable "node_instance_types" {
   type    = list(string)
-  default = ["m7i-flex.large"]
+  default = ["t3.medium"]
 }
 
 variable "desired_size" {
